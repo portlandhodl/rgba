@@ -42,6 +42,7 @@ use renderers::SwVideo;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum VideoEventKind {
+
     StartHdraw,
     StartHblank,
 }
@@ -238,10 +239,11 @@ impl Gba {
 
     fn video_start_hdraw(&mut self, timing: &mut Timing, cycles_late: u32) {
         self.video.event_kind = VideoEventKind::StartHblank;
+        let when = VIDEO_HDRAW_LENGTH - cycles_late as i32;
         timing.schedule(
             EventId::Video.into(),
             EventId::Video.priority(),
-            VIDEO_HDRAW_LENGTH - cycles_late as i32,
+            when,
         );
 
         self.video.vcount += 1;
@@ -299,10 +301,11 @@ impl Gba {
 
     fn video_start_hblank(&mut self, timing: &mut Timing, cycles_late: u32) {
         self.video.event_kind = VideoEventKind::StartHdraw;
+        let when = VIDEO_HBLANK_LENGTH - cycles_late as i32;
         timing.schedule(
             EventId::Video.into(),
             EventId::Video.priority(),
-            VIDEO_HBLANK_LENGTH - cycles_late as i32,
+            when,
         );
 
         // Begin Hblank
@@ -347,7 +350,9 @@ impl Gba {
         self.sync_savedata();
         self.cheat_apply();
     }
-    fn gb_interrupt(&mut self) {}
+    fn gb_interrupt(&mut self) {
+        self.gba_interrupt();
+    }
 
     fn calculate_stall_mask(&self, dispcnt: u16) -> u32 {
         let mut mask = 0u32;

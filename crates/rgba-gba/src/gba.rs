@@ -95,6 +95,7 @@ impl From<EventId> for u32 {
     }
 }
 
+
 pub struct Gba {
     pub hw: CartridgeHardware,
     pub cpu: ArmCore,
@@ -191,6 +192,8 @@ fn default_rtc_time_gba() -> i64 {
         .map(|d| d.as_secs() as i64)
         .unwrap_or(0)
 }
+
+
 
 impl Gba {
     pub fn new() -> Box<Gba> {
@@ -298,6 +301,15 @@ impl Gba {
         self.early_exit = true;
     }
 
+    /// GBAInterrupt — signals "current frame / lockstep boundary reached";
+    /// used by the video event when the frame ends. Moves the pending event
+    /// queue aside (`mTimingInterrupt`) so anything dispatching next runs
+    /// after the frontend has had a shot at the frame.
+    pub fn gba_interrupt(&mut self) {
+        self.early_exit = true;
+        self.timing.interrupt();
+    }
+
     /// GBAStop
     pub fn stop(&mut self) {
         // The stub: stop is not yet meaningfully emulated in mGBA either.
@@ -359,16 +371,16 @@ impl Gba {
 
     /// GBAProcessEvents (gba.c). `cycles are tracked relative to next_event`.
     pub fn process_events(&mut self) {
-        loop {
-            let cycles = self.cpu.cycles;
-            self.cpu.cycles = 0;
+        // Mirror the C loop exactly: recapture `cycles` fresh every tick
+        // while handlers may push cycles back onto cpu.cycles.
+        let mut timing = std::mem::take(&mut self.timing);
+        let mut next_event = self.cpu.next_event;
+                while self.cpu.cycles >= next_event {
             self.cpu.next_event = i32::MAX;
-
-            let mut timing = std::mem::take(&mut self.timing);
-            timing.set_relative_cycles(0);
-            timing.set_next_event(i32::MAX);
-            let mut next_event = 0;
+            next_event = 0;
             loop {
+                let cycles = self.cpu.cycles;
+                self.cpu.cycles = 0;
                 let to_tick = if cycles < next_event {
                     next_event
                 } else {
@@ -381,7 +393,6 @@ impl Gba {
                     break;
                 }
             }
-            self.timing = timing;
             self.cpu.next_event = next_event;
             if self.cpu.halted != 0 {
                 self.cpu.cycles = next_event;
@@ -394,10 +405,8 @@ impl Gba {
             if self.early_exit {
                 break;
             }
-            if self.cpu.cycles < self.cpu.next_event {
-                break;
-            }
         }
+        self.timing = timing;
         self.early_exit = false;
         if self.cpu_blocked {
             self.cpu.cycles = self.cpu.next_event;
