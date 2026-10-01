@@ -336,3 +336,29 @@ fn access_logger_records_writes_and_execution() {
 }
 
 
+
+// GBA GameShark hook cheat lifecycle: cheat_add_set patches a Thumb BKPT
+// (0xBE00|1) into the hooked address, cheat_remove_set restores the old
+// bytes. (Firing the hook runs through the same BKPT dispatch path that the
+// software breakpoint tests exercise; hooked cheat sets typically hook
+// Thumb-compiled ROM symbols.)
+#[test]
+fn gsa_hook_patch_and_restore() {
+    use rgba_gba::cheats::gba_cheat_set_create_with_hook;
+    use rgba_gba::gba::Gba;
+    let mut rom_img = vec![0u8; 0x8000];
+    // Thumb nop sled at 0x8000000: movs r0, #0 (0x2000)
+    for off in (0..16).step_by(2) {
+        rom_img[off..off + 2].copy_from_slice(&[0x00, 0x20]);
+    }
+    rom_img[0xB2] = 0x96;
+    let mut gba = Gba::new();
+    gba.load_rom(rom_img);
+    gba.arm_reset();
+    let set = rgba_core::cheats::CheatSet::new("hook test");
+    let state = gba_cheat_set_create_with_hook(0x08000004);
+    gba.cheat_add_set(set, state);
+    assert_eq!(gba.view16(0x08000004), 0xBE01);
+    gba.cheat_remove_set(0);
+    assert_eq!(gba.view16(0x08000004), 0x2000);
+}

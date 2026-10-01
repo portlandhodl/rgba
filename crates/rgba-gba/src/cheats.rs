@@ -232,10 +232,23 @@ pub struct GbaCheatSet {
     incomplete_patch: Option<usize>,
     current_block: usize,
     remaining_addresses: i32,
-    /// struct GBACheatHook reduced to "hooked ROM address" — the breakpoint
-    /// application behind it (GBASetBreakpoint) is not ported. Field order
-    /// per the C struct.
-    hook: Option<u32>,
+    /// struct GBACheatHook: the hooked ROM address + the opcode that was
+    /// originally there (the BKPT is patched into ROM while the set is
+    /// enabled; see GBASetBreakpoint / gba_breakpoint).
+    /// Field order per the C struct.
+    hook: Option<GbaCheatHook>,
+}
+
+/// struct GBACheatHook (minus the `mode` field; this mGBA snapshot installs
+/// hooks in Thumb mode unconditionally).
+#[derive(Clone, Copy, Debug)]
+pub struct GbaCheatHook {
+    pub address: u32,
+    /// Original opcode clobbered by the BKPT patch (repatched in
+    /// `gba_breakpoint` after each hit via ARMRunFake, as in the C).
+    pub patched_opcode: u32,
+    /// C `reentries`: sub-frame nesting guard around _addBreakpoint.
+    pub reentries: usize,
 }
 
 impl GbaCheatSet {
@@ -591,7 +604,7 @@ pub fn gba_cheat_add_game_shark_raw(
             }
             // GBACheatHook alloc: address/mode/refs/reentries; PORT: address
             // only (breakpoint application not ported).
-            state.hook = Some(GBA_BASE_ROM0 | (op1 & (GBA_SIZE_ROM0 as u32 - 1)));
+            state.hook = Some(GbaCheatHook { address: GBA_BASE_ROM0 | (op1 & (GBA_SIZE_ROM0 as u32 - 1)), patched_opcode: 0, reentries: 0 });
             return true;
         }
         _ => return false,
@@ -954,7 +967,7 @@ pub fn gba_cheat_add_pro_action_replay_raw(
             return false;
         }
         // GBACheatHook alloc; PORT: address only.
-        state.hook = Some(GBA_BASE_ROM0 | (op1 & (GBA_SIZE_ROM0 as u32 - 2)));
+        state.hook = Some(GbaCheatHook { address: GBA_BASE_ROM0 | (op1 & (GBA_SIZE_ROM0 as u32 - 2)), patched_opcode: 0, reentries: 0 });
         return true;
     }
 
@@ -1377,7 +1390,7 @@ pub fn gba_cheat_add_code_breaker(
                 return false;
             }
             // GBACheatHook alloc; PORT: address only.
-            state.hook = Some(GBA_BASE_ROM0 | (op1 & (GBA_SIZE_ROM0 as u32 - 1)));
+            state.hook = Some(GbaCheatHook { address: GBA_BASE_ROM0 | (op1 & (GBA_SIZE_ROM0 as u32 - 1)), patched_opcode: 0, reentries: 0 });
             return true;
         }
         CB_OR_2 => {
@@ -1608,6 +1621,17 @@ pub fn gba_cheat_add_vba_line(cheats: &mut CheatSet, line: &str) -> bool {
     true
 }
 
+/// Test helper: GBACheatSet::create + a GSA_HOOK hook pre-set.
+pub fn gba_cheat_set_create_with_hook(hook_addr: u32) -> GbaCheatSet {
+    let mut set = GbaCheatSet::new();
+    set.hook = Some(GbaCheatHook {
+        address: hook_addr,
+        patched_opcode: 0,
+        reentries: 0,
+    });
+    set
+}
+
 /// GBACheatAddLine (the set->addLine hook), wrapped in mCheatAddLine's core
 /// bookkeeping: on success the raw line is kept for save/dump.
 pub fn gba_cheat_add_line(
@@ -1777,19 +1801,67 @@ impl CheatBus for Gba {
 }
 
 impl Gba {
-    /// mCheatAddSet + the GBACheatAddSet hook (which only installs the
-    /// breakpoint; not ported). Keeps the GBACheatSet state list in lockstep
-    /// with the shared device list, one entry per set.
+    /// mCheatAddSet + the GBACheatAddSet hook. If the set is hooked, this is
+    /// where the BKPT gets patched into the ROM (C: _addBreakpoint →
+    /// GBASetBreakpoint). Our call happens only when the set is added,
+    /// matching the C mCheatAddSet→GBACheatAddSet path.
     pub fn cheat_add_set(&mut self, set: CheatSet, state: GbaCheatSet) {
+        if let Some(hook) = &state.hook {
+            // _addBreakpoint: reentries guard + patch
+            let mut hook = *hook;
+            hook.reentries += 1;
+            if hook.reentries <= 1 {
+                let mut old: i16 = 0;
+                let value = (0xBE00u16 | crate::debugger::CHEAT_COMPONENT_ID as u16) as i16;
+                self.patch16(hook.address & !1, value, Some(&mut old));
+                hook.patched_opcode = (old as u16) as u32;
+            }
+            let mut st = state;
+            st.hook = Some(hook);
+            self.cheats.add_set(set);
+            self.gba_cheat_sets.push(st);
+            return;
+        }
         self.cheats.add_set(set);
         self.gba_cheat_sets.push(state);
     }
 
-    /// mCheatRemoveSet + the GBACheatRemoveSet hook (not ported).
+    /// mCheatRemoveSet + the GBACheatRemoveSet hook (restores the patched
+    /// opcode when this was the last enabler).
     pub fn cheat_remove_set(&mut self, index: usize) {
+        if let Some(state) = self.gba_cheat_sets.get(index) {
+            if let Some(hook) = &state.hook {
+                let mut hook = *hook;
+                hook.reentries = hook.reentries.saturating_sub(1);
+                if hook.reentries == 0 {
+                    self.patch16(hook.address & !1, hook.patched_opcode as i16, None);
+                }
+            }
+        }
         self.cheats.remove_set(index);
         if index < self.gba_cheat_sets.len() {
             self.gba_cheat_sets.remove(index);
+        }
+    }
+
+    /// Called from the BKPT handler when a hooked cheat fires
+    /// (gba.c's CPU_COMPONENT_CHEAT_DEVICE arm). Refreshes only the hook that
+    /// matched, then ARMRunFake's the original instruction.
+    pub fn dbg_cheat_breakpoint(&mut self) {
+        let pc = self.dbg_pc_address();
+        for i in 0..self.gba_cheat_sets.len() {
+            let hook = self.gba_cheat_sets[i].hook;
+            let Some(hook) = hook else { continue };
+            if hook.address != pc {
+                continue;
+            }
+            // mCheatRefresh on that set
+            let mut device = std::mem::take(&mut self.cheats);
+            device.cheat_refresh(self, i);
+            self.cheats = device;
+            // Re-run the clobbered instruction; on return, execution
+            // continues just past it.
+            self.arm_run_fake(hook.patched_opcode);
         }
     }
 

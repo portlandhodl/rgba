@@ -30,9 +30,10 @@ const ARM_LR: usize = 14;
 const ARM_SP: usize = 13;
 
 // The C encodes the debugger's CPU-component index in BKPT immediate bits.
-// We have no component array; a fixed id is used and the bkpt handler enters
-// the debugger whenever one is attached.
-const DBG_COMPONENT_ID: i32 = 0;
+// We emulate a 2-component table: debugger at 0, cheats at 1 (matching the
+// C's CPU_COMPONENT_DEBUGGER / CPU_COMPONENT_CHEAT_DEVICE).
+pub(crate) const DBG_COMPONENT_ID: i32 = 0;
+pub(crate) const CHEAT_COMPONENT_ID: i32 = 1;
 
 /// ARMDebugBreakpoint
 #[derive(Clone)]

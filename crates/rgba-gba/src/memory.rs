@@ -1548,7 +1548,6 @@ impl Gba {
                 old_value = i16::from_le_bytes([self.memory.rom[i], self.memory.rom[i + 1]]);
                 self.memory.rom[i] = value as u8;
                 self.memory.rom[i + 1] = (value >> 8) as u8;
-                return;
             }
             GBA_REGION_VRAM => {
                 let i = if (address & 0x0001FFFF) < GBA_SIZE_VRAM as u32 { (address & 0x0001FFFE) as usize } else { (address & 0x00017FFE) as usize };

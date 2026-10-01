@@ -448,22 +448,34 @@ impl Gba {
     pub fn bkpt32(&mut self, immediate: i32) {
         self.gba_breakpoint(immediate);
     }
-    fn gba_breakpoint(&mut self, _immediate: i32) {
-        if self.debugger.is_some() {
-            use rgba_debugger::debugger::*;
-            let pc_addr = self.dbg_pc_address();
-            let info = DebuggerEntryInfo {
-                address: pc_addr,
-                type_info: Some(EntryTypeInfo::Bp(BreakpointEntryInfo {
-                    opcode: 0,
-                    break_type: BreakpointType::Software,
-                })),
-                point_id: -1,
-                ..Default::default()
-            };
-            self.debugger_enter(DebuggerEntryReason::Breakpoint, info);
+    /// GBABreakpoint: the immediate picks the BKPT "component" (debugger=0,
+    /// cheats=1; see debugger.rs). Anything else falls through to
+    /// ARMRaiseUndefined, as in the C.
+    fn gba_breakpoint(&mut self, immediate: i32) {
+        match immediate {
+            0 => {
+                if self.debugger.is_some() {
+                    use rgba_debugger::debugger::*;
+                    let pc_addr = self.dbg_pc_address();
+                    let info = DebuggerEntryInfo {
+                        address: pc_addr,
+                        type_info: Some(EntryTypeInfo::Bp(BreakpointEntryInfo {
+                            opcode: 0,
+                            break_type: BreakpointType::Software,
+                        })),
+                        point_id: -1,
+                        ..Default::default()
+                    };
+                    self.debugger_enter(DebuggerEntryReason::Breakpoint, info);
+                    return;
+                }
+            }
+            1 => {
+                self.dbg_cheat_breakpoint();
+                return;
+            }
+            _ => self.arm_raise_undefined(),
         }
-        // No debugger (or after entering): BKPT is a no-op (C returns here).
     }
     pub fn hit_illegal(&mut self, opcode: u32) {
         mlog!(
