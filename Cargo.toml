@@ -12,7 +12,8 @@ members = [
 version = "0.1.0"
 edition = "2021"
 license = "MPL-2.0"
-homepage = "https://mgba.io/"
+homepage = "https://github.com/portlandhodl/rgba"
+repository = "https://github.com/portlandhodl/rgba"
 description = "A Rust port of the mGBA emulator (Game Boy Advance and Game Boy)"
 
 [profile.release]

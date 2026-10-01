@@ -1,7 +1,10 @@
 # Porting guide: mGBA C → rgba Rust
 
 All core code is a **mechanical, behavior-preserving port** of the mGBA C
-sources vendored in `./mgba/`. Follow these rules exactly so modules compose.
+sources (mGBA 0.11.0-dev, https://github.com/mgba-emu/mgba). The C source is
+not vendored in this tree; the `// Ported from mgba/<path>` comment at the
+top of each Rust module names the exact C file it ports. Follow these rules
+exactly so modules compose.
 
 ## Naming
 

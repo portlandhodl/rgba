@@ -1,9 +1,11 @@
 # rgba — Rust port of mGBA
 
-`rgba` is a Rust re-implementation of the [mGBA](https://mgba.io/) emulator
-(source snapshot 0.11.0-dev, vendored in `./mgba/` for reference). It targets the
-GBA (ARM7TDMI) and GB (SM83) consoles, mirroring mGBA's module structure and,
-where it matters, its timing/cycle semantics.
+`rgba` is a Rust re-implementation of the [mGBA](https://mgba.io/) emulator.
+It targets the GBA (ARM7TDMI) and GB (SM83) consoles, mirroring mGBA's module
+structure and, where it matters, its timing/cycle semantics. The C reference
+is mGBA 0.11.0-dev (https://github.com/mgba-emu/mgba); this tree no longer
+vendors it. The per-file provenance markers (`// Ported from mgba/...`)
+identify the exact C file each module ports.
 
 ## License
 
@@ -29,7 +31,7 @@ libretro frontend uses it; the GB/GBA cores and the SDL frontend path do not.
 | `crates/rgba-core/src/serialize.rs` | `src/core/serialize.c` |
 | `crates/rgba-core/src/patch.rs` | `src/util/patch.c`, `src/util/patch-ips.c`, `src/util/patch-ups.c` (IPS/UPS/BPS via `Patch::load`/`output_size`/`apply`) |
 | `crates/rgba-core/src/patch_fast.rs` | `src/util/patch-fast.c` (in-memory XOR-extent diff, used by mGBA's rewind) |
-| `crates/rgba-core/src/video_logger.rs` | `src/feature/video-logger.c`, `include/mgba/feature/video-logger.h` (mVL video-log record/replay format core; zlib → flate2; GB record-side glue in `crates/rgba-gb/src/video_log.rs`; GBA record glue and Gb/Gba player cores behind `VideoLogPlayer` are integration pending) |
+| `crates/rgba-core/src/video_logger.rs` | `src/feature/video-logger.c`, `include/mgba/feature/video-logger.h` (mVL video-log record/replay format core; zlib → flate2; GB record-side glue in `crates/rgba-gb/src/video_log.rs`; GBA record glue in `crates/rgba-gba/src/video_log.rs`; the `VideoLogPlayer` replay cores stay integration-pending) |
 | `crates/rgba-core/src/log.rs` | `src/core/log.c` (subset) |
 | `crates/rgba-gb/src/cpu/*` | `src/sm83/*` |
 | `crates/rgba-gb/src/gb.rs` | `src/gb/gb.c` |
