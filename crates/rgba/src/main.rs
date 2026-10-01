@@ -310,6 +310,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         texture.update(None, px, (w * 4) as usize)?;
         canvas.copy(&texture, None, None).map_err(|e| e.to_string())?;
         canvas.present();
+        if std::env::var("RGBA_TRACE").is_ok() {
+            eprintln!("[loop] presented frame {}", frame_total);
+        }
 
         // Audio: resample + queue (mAudioResamplerProcess + mAudioBufferRead
         // into SDL, single-threaded so no mCoreSyncLockAudio needed).
@@ -327,6 +330,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let mut buf = vec![0i16; avail];
                 let got = resampled.read_into(&mut buf);
                 let _ = device.queue_audio(&buf[..got]);
+                if std::env::var("RGBA_TRACE").is_ok() {
+                    eprintln!("[loop] queued {} frames", got);
+                }
             }
             if device.size() > 16 * 1024 {
                 // overflow guard
