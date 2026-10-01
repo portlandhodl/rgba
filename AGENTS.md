@@ -21,6 +21,9 @@ mGBA file it was ported from.
 | `crates/rgba-core/src/blip.rs` | `src/third-party/blip_buf/blip_buf.c` |
 | `crates/rgba-core/src/ring.rs` | `src/util/ring-fifo.c` / `circle-buffer.c` |
 | `crates/rgba-core/src/serialize.rs` | `src/core/serialize.c` |
+| `crates/rgba-core/src/patch.rs` | `src/util/patch.c`, `src/util/patch-ips.c`, `src/util/patch-ups.c` (IPS/UPS/BPS via `Patch::load`/`output_size`/`apply`) |
+| `crates/rgba-core/src/patch_fast.rs` | `src/util/patch-fast.c` (in-memory XOR-extent diff, used by mGBA's rewind) |
+| `crates/rgba-core/src/video_logger.rs` | `src/feature/video-logger.c`, `include/mgba/feature/video-logger.h` (mVL video-log record/replay format core; zlib → flate2; `mCore::startVideoLog` hookup, proxy renderers, and Gb/Gba player cores behind `VideoLogPlayer` are integration pending) |
 | `crates/rgba-core/src/log.rs` | `src/core/log.c` (subset) |
 | `crates/rgba-gb/src/cpu/*` | `src/sm83/*` |
 | `crates/rgba-gb/src/gb.rs` | `src/gb/gb.c` |
@@ -33,6 +36,7 @@ mGBA file it was ported from.
 | `crates/rgba-gb/src/mbc/*` | `src/gb/mbc/*` |
 | `crates/rgba-gb/src/serialize.rs` | `src/gb/serialize.c` |
 | `crates/rgba-gb/src/cheats.rs` | `src/gb/cheats.c` |
+| `crates/rgba-gb/src/overrides.rs` | `src/gb/overrides.c`, `include/mgba/internal/gb/overrides.h` (static tables; config/ini overrides not ported) |
 | `crates/rgba-gba/src/cpu/*` | `src/arm/*` |
 | `crates/rgba-gba/src/gba.rs` | `src/gba/gba.c` |
 | `crates/rgba-gba/src/memory.rs` | `src/gba/memory.c` |
@@ -41,7 +45,8 @@ mGBA file it was ported from.
 | `crates/rgba-gba/src/video.rs` | `src/gba/video.c` (+ `src/gba/renderers/*` software renderer) |
 | `crates/rgba-gba/src/audio.rs` | `src/gba/audio.c` |
 | `crates/rgba-gba/src/timers.rs` | `src/gba/timer.c` |
-| `crates/rgba-gba/src/sio.rs` | `src/gba/sio*.c` |
+| `crates/rgba-gba/src/sio/mod.rs` | `src/gba/sio.c` (driver vtable → `SioDriver` enum) |
+| `crates/rgba-gba/src/sio/lockstep.rs` | `src/gba/sio/lockstep.c`, `include/mgba/internal/gba/sio/lockstep.h`, `include/mgba/core/lockstep.h` (single-threaded cooperative model: `Rc<RefCell<GbaSioLockstep>>` shared between linked `Gba`s, node event = `EventId::SioLockstep`; driver savestate via `Gba::sio_save_extra_state`/`sio_load_extra_state`, mirroring core.c's extdata slot) |
 | `crates/rgba-gba/src/savedata.rs` | `src/gba/savedata.c` |
 | `crates/rgba-gba/src/cart/mod.rs` | `src/gba/cart/gpio.c` (GPIO: RTC, rumble, light, gyro/tilt) |
 | `crates/rgba-gba/src/cart/ereader.rs` | `src/gba/cart/ereader.c` (register file, dotcode strip gen, serial state machine; no image-scan/frontend bits) |
@@ -49,6 +54,7 @@ mGBA file it was ported from.
 | `crates/rgba-gba/src/cart/matrix.rs` | `src/gba/cart/matrix.c` |
 | `crates/rgba-gba/src/bios.rs` | `src/gba/bios.c`, `src/gba/hle-bios.*` |
 | `crates/rgba-gba/src/serialize.rs` | `src/gba/serialize.c` |
+| `crates/rgba-gba/src/overrides.rs` | `src/gba/overrides.c`, `include/mgba/internal/gba/overrides.h` (static table + Pokémon ROM-hack defaults; config/ini overrides not ported) |
 | `crates/rgba-gba/src/cheats.rs` | `src/gba/cheats.c`, `src/gba/cheats/{gameshark,parv3,codebreaker}.c` (GBACheatHook breakpoints not ported) |
 | `crates/rgba-debugger/src/debugger.rs` | `src/debugger/debugger.c` (`mDebugger`, `mDebuggerModule`, platform glue; platform vtable → `DebugConsole` trait + inherent `Gb`/`Gba` methods) |
 | `crates/rgba-debugger/src/access_logger.rs` | `src/debugger/access-logger.c`, `include/mgba/internal/debugger/access-logger.h` (`mDebuggerAccessLogger` module, mAL\1 region/flag tables; recording is driven by the consoles' memory-shim hooks into `AccessLoggerCore` held by `GbDebugger`/`GbaDebugger`, instead of C's per-region watchpoints) |
@@ -61,7 +67,7 @@ mGBA file it was ported from.
 | `crates/rgba-gba/src/arm/decoder.rs` | `src/arm/decoder.c`, `decoder-arm.c`, `decoder-thumb.c` (debuggers/trace only) |
 | `crates/rgba-gb/src/debugger.rs` | `src/sm83/debugger/*`, `src/gb/debugger/debugger.c` |
 | `crates/rgba-gba/src/debugger.rs` | `src/arm/debugger/*` + GBA glue from `src/gba/gba.c`/`core.c` |
-| `crates/rgba/src/*` | SDL2 frontend (like `src/platform/sdl/sdl-main.c`) |
+| `crates/rgba/src/*` | SDL2 frontend (like `src/platform/sdl/sdl-main.c`; `--patch` mirrors `mCore::loadPatch` by patching the ROM buffer before `load_rom`) |
 
 ## Conventions
 

@@ -2,7 +2,7 @@
 // Minimal SDL2 frontend: window + streaming texture + queued audio + input,
 // save/load state, and (GB-only for now) peripheral sync stubs.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use rgba_core::core::Core;
 use rgba_debugger::cli::{CliBackend, CliDebugger};
@@ -28,6 +28,9 @@ struct Args {
     /// Cheats file (one code per line, GameShark/GameGenie)
     #[arg(long)]
     cheats: Option<PathBuf>,
+    /// ROM patch file (.ips/.ups/.bps), applied before load (mGBA -p)
+    #[arg(long)]
+    patch: Option<PathBuf>,
     /// Disable vsync
     #[arg(long)]
     no_sync: bool,
@@ -84,9 +87,52 @@ impl CliBackend for StdioBackend {
     }
 }
 
+/// --patch (mGBA: mCore::loadPatch → loadPatch + GBApplyPatch/GBAApplyPatch).
+/// Here the patch is applied to the ROM buffer before load_rom instead of
+/// swapping out the in-emulator ROM; GBApplyPatch clamps to GB_SIZE_CART_MAX,
+/// GBAApplyPatch rejects anything past GBA_SIZE_ROM0.
+fn patch_rom_buffer(rom: &mut Vec<u8>, patch_path: &Path, max_size: usize, clamp: bool) {
+    let patch_bytes = match std::fs::read(patch_path) {
+        Ok(b) => b,
+        Err(e) => {
+            eprintln!("failed to read patch {}: {}", patch_path.display(), e);
+            return;
+        }
+    };
+    let patch = match rgba_core::patch::Patch::load(&patch_bytes) {
+        Some(p) => p,
+        None => {
+            eprintln!("unrecognized patch format: {}", patch_path.display());
+            return;
+        }
+    };
+    let mut out_size = match patch.output_size(rom.len()) {
+        Some(s) if s > 0 => s,
+        _ => {
+            eprintln!("patch does not apply to this ROM");
+            return;
+        }
+    };
+    if out_size > max_size {
+        if clamp {
+            out_size = max_size;
+        } else {
+            eprintln!("patched ROM too large");
+            return;
+        }
+    }
+    let mut out = vec![0u8; out_size];
+    if patch.apply(rom, &mut out) {
+        *rom = out;
+        println!("applied patch {}", patch_path.display());
+    } else {
+        eprintln!("failed to apply patch {}", patch_path.display());
+    }
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
-    let rom = std::fs::read(&args.rom)?;
+    let mut rom = std::fs::read(&args.rom)?;
 
     let mut core: Box<dyn Core> = if rgba_gba::gba::Gba::is_rom(&rom) {
         let g = Gba::new();
@@ -94,6 +140,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         if let Some(bios_path) = &args.bios {
             let bios = std::fs::read(bios_path)?;
             rgba_gba::bios::bios_load(&mut g, &bios);
+        }
+        if let Some(patch_path) = &args.patch {
+            patch_rom_buffer(&mut rom, patch_path, rgba_gba::memory::GBA_SIZE_ROM0, false);
         }
         g.load_rom(rom);
         g.arm_reset();
@@ -108,6 +157,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let mut g = *g;
         if let Some(m) = &args.gb_model {
             g.model = name_to_gb_model(m);
+        }
+        if let Some(patch_path) = &args.patch {
+            patch_rom_buffer(&mut rom, patch_path, rgba_gb::memory::GB_SIZE_CART_MAX, true);
         }
         g.load_rom(rom);
         g.sm83_reset();

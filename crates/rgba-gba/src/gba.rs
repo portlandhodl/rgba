@@ -20,6 +20,9 @@ use crate::cart::{EReader, Matrix, UnlCart};
 
 pub const GBA_ARM7TDMI_FREQUENCY: u32 = 0x1000000;
 
+/// interface.h GBA_IDLE_LOOP_NONE
+pub const GBA_IDLE_LOOP_NONE: u32 = 0xFFFF_FFFF;
+
 pub const GBA_SP_BASE_SYSTEM: i32 = 0x03007F00;
 pub const GBA_SP_BASE_IRQ: i32 = 0x03007FA0;
 pub const GBA_SP_BASE_SUPERVISOR: i32 = 0x03007FE0;
@@ -27,17 +30,15 @@ pub const GBA_SP_BASE_SUPERVISOR: i32 = 0x03007FE0;
 // Hardware device flags (interface.h GBAHardwareDevice)
 pub const HW_NO_OVERRIDE: u32 = 0x8000;
 pub const HW_NONE: u32 = 0;
-pub const HW_MOTION_SENSOR: u32 = 1;
-pub const HW_GB_PLAYER: u32 = 2;
-pub const HW_GB_PLAYER_DETECTION: u32 = 4;
-pub const HW_EREADER: u32 = 8;
-pub const HW_RUMBLE: u32 = 16;
-pub const HW_GYRO: u32 = 32;
-pub const HW_SOLAR_SENSOR: u32 = 64;
-pub const HW_TILT: u32 = 128;
-pub const HW_GPIO: u32 = 256;
-pub const HW_RTC: u32 = 512;
-pub const HW_RUMBLE_GPIO: u32 = 1024;
+pub const HW_RTC: u32 = 1;
+pub const HW_RUMBLE: u32 = 2;
+pub const HW_LIGHT_SENSOR: u32 = 4;
+pub const HW_GYRO: u32 = 8;
+pub const HW_TILT: u32 = 16;
+pub const HW_GB_PLAYER: u32 = 32;
+pub const HW_GB_PLAYER_DETECTION: u32 = 64;
+pub const HW_EREADER: u32 = 128;
+pub const HW_GPIO: u32 = HW_RTC | HW_RUMBLE | HW_LIGHT_SENSOR | HW_GYRO | HW_TILT;
 
 // IRQ bits (gba.h enum GBAIRQ)
 pub const GBA_IRQ_VBLANK: u16 = 0;
@@ -65,6 +66,10 @@ pub enum EventId {
     Timer3 = 18,
     Sio = 19,
     IrqEvent = 20,
+    /// "GBA SIO Lockstep" (gba/sio/lockstep.c, priority 0x80)
+    SioLockstep = 21,
+    /// "GBA SIO Lockstep"/dolphin (gba/sio/dolphin.c, priority 0x80)
+    SioDolphin = 22,
 }
 
 impl EventId {
@@ -75,6 +80,7 @@ impl EventId {
             EventId::AudioSample => 0x18,
             EventId::Timer0 | EventId::Timer1 | EventId::Timer2 | EventId::Timer3 => 0x20,
             EventId::Sio => 0x80,
+            EventId::SioLockstep | EventId::SioDolphin => 0x80,
             EventId::IrqEvent => 0,
         }
     }
@@ -209,7 +215,7 @@ impl Gba {
             early_exit: false,
             halt_pending: false,
             idle_optimization: crate::memory::IDLE_LOOP_IGNORE,
-            idle_loop: 0,
+            idle_loop: GBA_IDLE_LOOP_NONE,
             vba_bug_compat: false,
             hard_crash: false,
             debug: false,
@@ -388,6 +394,16 @@ impl Gba {
             x if x == EventId::Timer2 as u32 => self.timer_fired(2, timing, cycles_late as u32),
             x if x == EventId::Timer3 as u32 => self.timer_fired(3, timing, cycles_late as u32),
             x if x == EventId::Sio as u32 => self.sio_complete_event(timing, cycles_late as u32),
+            x if x == EventId::SioDolphin as u32 => {
+                // GBASIODolphinProcessEvents
+                if let Some(mut dol) = self.sio.dolphin.take() {
+                    dol.process_events(self, cycles_late);
+                    self.sio.dolphin = Some(dol);
+                }
+            }
+            x if x == EventId::SioLockstep as u32 => {
+                self.sio_lockstep_event(timing, cycles_late as u32)
+            }
             x if x == EventId::IrqEvent as u32 => self.trigger_irq_event(),
             _ => unreachable!(),
         }
@@ -546,6 +562,11 @@ impl Gba {
         {
             self.arm_run_loop();
         }
+        // GBASIOPlayerUpdate runs when the GB Player (detection) device is
+        // live. The detection bit starts at 0; frontends set it to opt in.
+        if self.hw.devices & (crate::gba::HW_GB_PLAYER | crate::gba::HW_GB_PLAYER_DETECTION) != 0 {
+            crate::sio::gbp::gbp_update(self);
+        }
     }
 
     pub fn step(&mut self) {
@@ -673,16 +694,9 @@ impl Gba {
     }
 
     fn apply_overrides(&mut self) {
-        // GBADetectGame overrides + pokemon ROM-hack defaults
-        // The full _overrides table comes from gba/overrides.c; we apply the
-        // ones needed for working savedata/RTC.
-        if self.memory.rom.len() < 0xC0 {
-            return;
-        }
-        let title = String::from_utf8_lossy(&self.memory.rom[0xA0..0xAC]).into_owned();
-        let _ = title;
-        let code = &self.memory.rom[0xAC..0xB0];
-        let _ = code;
+        // GBAOverrideApplyDefaults (gba/overrides.c); config/ini overrides are
+        // not ported, so this is the static table + Pokémon ROM-hack defaults.
+        crate::overrides::override_apply_defaults(self);
     }
 }
 

@@ -9,7 +9,7 @@ pub use ereader::EReader;
 pub use matrix::Matrix;
 pub use unlicensed::{UnlCart, UnlCartType};
 
-use crate::gba::{Gba, HW_GYRO, HW_RTC, HW_RUMBLE, HW_SOLAR_SENSOR, HW_TILT};
+use crate::gba::{Gba, HW_GB_PLAYER_DETECTION, HW_GYRO, HW_NO_OVERRIDE, HW_RTC, HW_RUMBLE, HW_LIGHT_SENSOR, HW_TILT};
 use rgba_core::{mlog, Level};
 
 pub const GBA_LUX_LEVELS: [i32; 10] = [5, 11, 18, 27, 42, 62, 84, 109, 139, 183];
@@ -267,7 +267,7 @@ impl Gba {
         if self.hw.devices & HW_RUMBLE != 0 {
             self.rumble_read_pins();
         }
-        if self.hw.devices & HW_SOLAR_SENSOR != 0 {
+        if self.hw.devices & HW_LIGHT_SENSOR != 0 {
             self.light_read_pins();
         }
     }
@@ -503,7 +503,7 @@ impl Gba {
         self.hw.devices |= HW_RUMBLE;
     }
     pub fn hw_init_light(&mut self) {
-        self.hw.devices |= HW_SOLAR_SENSOR;
+        self.hw.devices |= HW_LIGHT_SENSOR;
         self.hw.light_counter = 0;
         self.hw.light_edge = false;
         self.hw.light_sample = 0xFF;
@@ -513,6 +513,15 @@ impl Gba {
         self.hw.tilt_x = 0xFFF;
         self.hw.tilt_y = 0xFFF;
         self.hw.tilt_state = 0;
+    }
+
+    /// GBAHardwareClear
+    pub fn hw_clear(&mut self) {
+        self.hw.devices = HW_NO_OVERRIDE | (self.hw.devices & HW_GB_PLAYER_DETECTION);
+        self.hw.read_write = GPIO_WRITE_ONLY;
+        self.hw.write_latch = 0;
+        self.hw.pin_state = 0;
+        self.hw.direction = 0;
     }
 
     // e-Reader (cart/ereader.rs), Matrix (cart/matrix.rs) and unlicensed-cart

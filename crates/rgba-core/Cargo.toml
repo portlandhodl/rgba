@@ -6,3 +6,6 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+# zlib streams for the (de)compression of mVL video-log blocks
+# (mGBA's USE_ZLIB path in src/feature/video-logger.c).
+flate2 = "1.1"

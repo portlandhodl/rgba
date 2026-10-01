@@ -12,6 +12,7 @@ pub mod dma;
 pub mod gba;
 pub mod io;
 pub mod memory;
+pub mod overrides;
 pub mod savedata;
 pub mod serialize;
 pub mod sio;

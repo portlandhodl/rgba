@@ -10,6 +10,7 @@ pub mod gb;
 pub mod io;
 pub mod mbc;
 pub mod memory;
+pub mod overrides;
 pub mod serialize;
 pub mod sio;
 pub mod timer;

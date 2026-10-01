@@ -366,6 +366,10 @@ impl Gb {
         }
         self.yanked_rom_size = 0;
         self.rom_crc32 = crate::crc32(&self.memory.rom[..self.memory.rom_size]);
+        // GBOverrideApplyDefaults (gb/overrides.c; the C applies it from
+        // _GBCoreReset right before GBReset's GBMBCReset, so it must land
+        // before mbc_reset here).
+        crate::overrides::override_apply_defaults(self);
         self.mbc_reset();
 
         if !self.memory.rom_base_is_mapped() {

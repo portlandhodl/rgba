@@ -560,8 +560,8 @@ fn hw_serialize(gba: &mut Gba, s: &mut Serializer) {
 
     let mut flags2: u8 = 0;
     flags2 |= (hw.tilt_state as u8) & 3;
-    // GBP/SIO legacy bits (GbpInputsPosted/GbpTxPosition) are 0: the GBP
-    // driver state isn't ported.
+    flags2 |= ((gba.sio.gbp.inputs_posted as u8) & 3) << 2; // GbpInputsPosted
+    flags2 |= ((gba.sio.gbp.tx_position as u8) & 3) << 4; // GbpTxPosition
     s.put_u8(flags2);
 
     s.put_u16(0); // unlCartFlags: no unlicensed-cart state
@@ -1329,8 +1329,9 @@ fn io_deserialize_commit(
     gba.hw.light_sample = hw.light_sample;
     gba.hw.light_edge = hw.flags1 & (1 << 2) != 0;
 
-    // GBP/SIO legacy bits (GbpInputsPosted/GbpTxPosition): no such state.
-    // HW_GB_PLAYER would install the GBP driver; not ported.
+    gba.sio.gbp.inputs_posted = ((hw.flags2 >> 2) & 3) as i32; // GbpInputsPosted
+    gba.sio.gbp.tx_position = ((hw.flags2 >> 4) & 3) as i32; // GbpTxPosition
+    // HW_GB_PLAYER installs the GBP driver during the next frame's update.
 
     if gba.memory.io[(GBA_REG_SIOCNT >> 1) as usize] & 0x0080 != 0 && hw.sio_next_event < 0x20000 {
         gba.schedule(EventId::Sio, hw.sio_next_event as i32);
