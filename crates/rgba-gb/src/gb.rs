@@ -79,11 +79,15 @@ pub enum EventId {
     Sio = 7,
     Dma = 8,
     Hdma = 9,
+    /// mEvent priority 0x80 (sio/lockstep.c node event; not in the C
+    /// enum's switch arms, it goes through mTiming like all events).
+    SioLockstep = 10,
 }
 
 impl EventId {
     pub fn priority(self) -> u32 {
         match self {
+            EventId::SioLockstep => 0x80,
             EventId::EiPending => 0,
             EventId::VideoMode => 8,
             EventId::VideoFrame => 9,
@@ -844,6 +848,7 @@ impl Gb {
             x if x == EventId::Sio as u32 => self.sio_event(timing, cycles_late as u32),
             x if x == EventId::Dma as u32 => self.memory_dma_service(timing, cycles_late as u32),
             x if x == EventId::Hdma as u32 => self.memory_hdma_service(timing, cycles_late as u32),
+            x if x == EventId::SioLockstep as u32 => self.sio_lockstep_event(timing, cycles_late as u32),
             _ => unreachable!(),
         }
     }

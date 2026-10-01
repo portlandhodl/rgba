@@ -14,12 +14,8 @@
 // Both linked `Gb`s therefore must live on one thread and share the lockstep
 // through an `Rc<RefCell<GbSioLockstep>>` (the node holds a Weak handle).
 //
-// INTEGRATION NOTE: the lockstep node's timing event (priority 0x80 in C)
-// does not have an `EventId` variant (gb.rs is fixed). It is scheduled under
-// `GB_SIO_LOCKSTEP_EVENT_ID`; `Gb::process_event` needs one extra arm
-// dispatching that id to `Gb::sio_lockstep_event` when linked play is wired
-// up. Until then, attaching a lockstep node schedules an event no dispatcher
-// recognizes.
+// The lockstep node's timing event is `EventId::SioLockstep` (priority
+// 0x80 as in the C).
 
 use std::cell::RefCell;
 use std::rc::{Rc, Weak};
@@ -576,9 +572,8 @@ impl Default for GbPrinter {
 
 pub const LOCKSTEP_INCREMENT: i32 = 512;
 
-/// The node event has priority 0x80 in C but no `EventId` slot (see the
-/// module comment); schedule under this id.
-pub const GB_SIO_LOCKSTEP_EVENT_ID: u32 = u32::MAX;
+/// The node event id (see `EventId::SioLockstep`).
+pub const GB_SIO_LOCKSTEP_EVENT_ID: u32 = EventId::SioLockstep as u32;
 pub const GB_SIO_LOCKSTEP_EVENT_PRIORITY: u32 = 0x80;
 
 /// enum mLockstepPhase
