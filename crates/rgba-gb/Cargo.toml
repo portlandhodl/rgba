@@ -1,0 +1,11 @@
+[package]
+name = "rgba-gb"
+description = "Game Boy (SM83) emulation core, a Rust port of mGBA's sm83 + gb modules"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+rgba-core = { path = "../rgba-core" }
+rgba-debugger = { path = "../rgba-debugger" }
+paste = "1"

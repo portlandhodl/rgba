@@ -1,0 +1,8 @@
+[package]
+name = "rgba-core"
+description = "Shared infrastructure for the rgba emulator cores (timing, serialization, cheats, audio mixing)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]

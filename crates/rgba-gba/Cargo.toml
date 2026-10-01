@@ -1,0 +1,10 @@
+[package]
+name = "rgba-gba"
+description = "Game Boy Advance (ARM7TDMI) emulation core, a Rust port of mGBA's arm + gba modules"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+rgba-core = { path = "../rgba-core" }
+rgba-debugger = { path = "../rgba-debugger" }

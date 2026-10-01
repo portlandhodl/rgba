@@ -1,0 +1,8 @@
+[package]
+name = "rgba-debugger"
+version = "0.1.0"
+edition = "2021"
+license = "MPL-2.0"
+
+[dependencies]
+rgba-core = { path = "../rgba-core" }

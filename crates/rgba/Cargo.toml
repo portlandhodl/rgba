@@ -1,0 +1,19 @@
+[package]
+name = "rgba"
+description = "rgba emulator frontend (SDL2)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "rgba"
+path = "src/main.rs"
+
+[dependencies]
+rgba-core = { path = "../rgba-core" }
+rgba-debugger = { path = "../rgba-debugger" }
+rgba-gb = { path = "../rgba-gb" }
+rgba-gba = { path = "../rgba-gba" }
+sdl2 = { version = "0.37", default-features = true }
+clap = { version = "4", features = ["derive"] }
+anyhow = "1"

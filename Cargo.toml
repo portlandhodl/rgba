@@ -1,0 +1,22 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/rgba-debugger",
+    "crates/rgba-core",
+    "crates/rgba-gb",
+    "crates/rgba-gba",
+    "crates/rgba",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MPL-2.0"
+homepage = "https://mgba.io/"
+description = "A Rust port of the mGBA emulator (Game Boy Advance and Game Boy)"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+debug = true
