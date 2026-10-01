@@ -86,28 +86,28 @@ impl RewindContext {
                 self.current = self.patch_memory.len();
             }
             self.current -= 1;
-
             if self.size > 1 {
                 let size2 = self.previous_state.len();
                 let mut size = self.current_state.len();
                 if size2 < size {
                     size = size2;
                 }
-                // applyPatch(patch, previous(map WRITE), size, current(map READ),
-                // size) in the C; the XOR extents are their own inverse, so
-                // applying the diff to the newer state reproduces the older.
-                let cur = self.current_state[..size].to_vec();
-                let prev = &mut self.previous_state;
-                self.patch_memory[self.current].apply(&cur, &mut prev[..size]);
+                // C: applyPatch(patch, previous, size, current, size) — read
+                // the older generation, patch it into the current buffer
+                // (reproducing the generation older still); then swap.
+                let prev = self.previous_state[..size].to_vec();
+                let cur = &mut self.current_state;
+                self.patch_memory[self.current].apply(&prev, &mut cur[..size]);
             }
             std::mem::swap(&mut self.previous_state, &mut self.current_state);
             self.size -= 1;
             count -= 1;
         }
 
-        let state = std::mem::take(&mut self.previous_state);
+        // C: mCoreLoadStateNamed(core, context->currentState, ...)
+        let state = std::mem::take(&mut self.current_state);
         let r = core.load_state(&state);
-        self.previous_state = state;
+        self.current_state = state;
         let _ = r;
         true
     }
