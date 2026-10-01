@@ -513,6 +513,11 @@ impl Gb {
         self.video.palette[9 * 4 + 3] = self.video.dmg_palette[11];
 
         self.video.renderer_init(self.model, self.video.sgb_borders);
+        // GBVideoProxyRendererInit (renderer->init through the shim):
+        // mVideoLoggerRendererInit re-creates the dirty bitmaps.
+        if let Some(vl) = self.video_logger.as_mut() {
+            vl.logger.renderer_init();
+        }
 
         let pal = self.video.palette;
         self.renderer_write_palette(0, pal[0]);
@@ -563,6 +568,8 @@ impl Gb {
     fn end_mode0(&mut self, timing: &mut Timing, cycles_late: u32) {
         if self.video.frameskip_counter <= 0 {
             self.renderer_finish_scanline(self.video.ly);
+            // GBVideoProxyRendererFinishScanline: backend first, then log.
+            self.vl_finish_scanline(self.video.ly);
         }
         let lyc = self.memory.io[GB_REG_LYC as usize] as i32;
         let next: i32;
@@ -740,6 +747,8 @@ impl Gb {
         }
         if self.video.frameskip_counter <= 0 {
             self.renderer_draw_range(old_x, self.video.x, self.video.ly);
+            // GBVideoProxyRendererDrawRange: backend first, then the log.
+            self.vl_draw_range(old_x, self.video.x, self.video.ly);
         }
     }
 
@@ -774,6 +783,9 @@ impl Gb {
         self.video.frameskip_counter -= 1;
         if self.video.frameskip_counter < 0 {
             self.renderer_finish_frame();
+            // GBVideoProxyRendererFinishFrame: backend, then frame packet
+            // + flush.
+            self.vl_finish_frame();
             self.video.frameskip_counter = self.video.frameskip;
         }
         self.frame_ended();
@@ -985,6 +997,10 @@ impl Gb {
         self.video.dmg_palette[10] = self.video.palette[9 * 4 + 2];
         self.video.dmg_palette[11] = self.video.palette[9 * 4 + 3];
         self.video.renderer_init(self.model, self.video.sgb_borders);
+        // GBVideoProxyRendererInit parity (see video_reset).
+        if let Some(vl) = self.video_logger.as_mut() {
+            vl.logger.renderer_init();
+        }
     }
 
     /// GBVideoWriteSGBPacket
@@ -1122,6 +1138,8 @@ impl Gb {
             }
         }
         self.renderer_write_sgb_packet();
+        // GBVideoProxyRendererWriteSGBPacket: backend first, then the log.
+        self.vl_write_sgb_packet();
     }
 }
 
@@ -1197,6 +1215,8 @@ impl Gb {
 
     /// GBVideoSoftwareRendererWriteVideoRegister
     pub fn renderer_write_video_register(&mut self, address: u16, value: u8) -> u8 {
+        // GBVideoProxyRendererWriteVideoRegister: log before the backend.
+        self.vl_write_video_register(address, value);
         let was_window = self.in_window();
         let wy = self.video.wy;
         match address {
@@ -1481,16 +1501,23 @@ impl Gb {
     }
 
     /// GBVideoSoftwareRendererWriteVRAM (tile-cache invalidate; no-op here)
-    pub fn renderer_write_vram(&mut self, _addr: u16) {}
+    pub fn renderer_write_vram(&mut self, addr: u16) {
+        // GBVideoProxyRendererWriteVRAM.
+        self.vl_write_vram(addr);
+    }
 
     /// GBVideoSoftwareRendererWriteOAM
-    pub fn renderer_write_oam(&mut self, _addr: u16) {
-        // Nothing to do
+    pub fn renderer_write_oam(&mut self, addr: u16) {
+        // GBVideoProxyRendererWriteOAM (backend had nothing to do; the C
+        // logs after the no-op backend call, reading live OAM either way).
+        self.vl_write_oam(addr);
     }
 
     /// GBVideoSoftwareRendererWritePalette (index is in [0,192) into the C
     /// renderer's palette array)
     pub fn renderer_write_palette(&mut self, index: i32, value: u16) {
+        // GBVideoProxyRendererWritePalette: log before the backend.
+        self.vl_write_palette(index, value);
         let mut color = m_color_from_555(value);
         if self.model_has_sgb() {
             if index as u32 >= PAL_SGB_BORDER && (index & 0xF) == 0 {

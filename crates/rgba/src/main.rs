@@ -48,6 +48,10 @@ struct Args {
     /// Enable rewind (hold R to rewind, one state per 30 frames kept in RAM)
     #[arg(long)]
     rewind: bool,
+    /// Record an mVL video log (renderer dirty packets) to this file
+    /// (mGBA -v/--video-log)
+    #[arg(short = 'v', long)]
+    video_log: Option<PathBuf>,
     /// Force Game Boy Player detection screen check (mGBA gba.forceGbp)
     #[arg(long)]
     gbp: bool,
@@ -155,6 +159,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         g.force_gbp = args.gbp; // mGBA config gba.forceGbp
         g.load_rom(rom);
         g.arm_reset();
+        if let Some(vl_path) = &args.video_log {
+            g.start_video_log(vl_path)?;
+        }
         if args.debug {
             g.debugger_attach();
             g.debugger_attach_module(Box::new(CliDebugger::new(StdioBackend)));
@@ -172,6 +179,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         g.load_rom(rom);
         g.sm83_reset();
+        if let Some(vl_path) = &args.video_log {
+            g.start_video_log(vl_path)?;
+        }
         if args.debug {
             g.debugger_attach();
             g.debugger_attach_module(Box::new(CliDebugger::new(StdioBackend)));

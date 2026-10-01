@@ -973,6 +973,10 @@ pub fn deserialize(gb: &mut Gb, state: &[u8]) -> Result<(), &'static str> {
         gb.schedule(EventId::VideoFrame, video_next_frame as i32);
     }
     gb.video.renderer_init(gb.model, gb.video.sgb_borders);
+    // GBVideoProxyRendererInit parity (renderer->init through the shim).
+    if let Some(vl) = gb.video_logger.as_mut() {
+        vl.logger.renderer_init();
+    }
     for i in 0..64 {
         gb.video.palette[i] = video_palette[i];
         let v = gb.video.palette[i];

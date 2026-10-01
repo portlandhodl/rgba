@@ -17,6 +17,7 @@ pub mod savedata;
 pub mod serialize;
 pub mod sharkport;
 pub mod sio;
+pub mod video_log;
 pub mod timers;
 pub mod video;
 

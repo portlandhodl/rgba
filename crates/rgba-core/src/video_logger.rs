@@ -21,18 +21,18 @@
 //   the channel buffer. The replayed byte stream and the file offsets are
 //   identical (the compressed block length in the header is consumed
 //   exactly); only peak buffering differs.
-// - INTEGRATION PENDING: the console glue is not wired up. In C the hook
-//   points are `mCore::startVideoLog`/`endVideoLog` (src/gba/core.c
-//   _GBACoreStartVideoLog, src/gb/core.c _GBCoreStartVideoLog), which shim a
-//   proxy renderer (src/{gba,gb}/extra/proxy.c) between the video core and
-//   the real renderer, and GBAVideoLogPlayerCreate/GBVideoLogPlayerCreate
-//   build the headless replay core. rgba's Core trait has no start_video_log
-//   entry and the proxy renderers are unported, so this module covers the
-//   file format plus the endpoint/run-loop machinery; per-console wiring
-//   (and actual construction of Gb/Gba player cores behind the
-//   VideoLogPlayer enum) is future work. The shading vram/oam/palette copies
-//   mVideoLoggerRendererInit mmaps also belong to that glue and are skipped;
-//   only the dirty bitmaps that drive packet emission are kept.
+// - INTEGRATION STATUS: both consoles have the record half wired up
+//   without a proxy renderer: `Gba::start_video_log`/`end_video_log`
+//   (rgba-gba) and `Gb::start_video_log`/`end_video_log`
+//   (rgba-gb/src/video_log.rs) mirror _GBACoreStartVideoLog/
+//   _GBACoreEndVideoLog and _GBCoreStartVideoLog/_GBCoreEndVideoLog, and
+//   the concrete renderer entry points forward to the logger (the
+//   *VideoProxyRenderer* log halves from src/{gba,gb}/extra/proxy.c
+//   inlined; the renderer shim itself and the GBAVideoLogPlayer/
+//   GBVideoLogPlayer replay cores behind the VideoLogPlayer enum stay
+//   unported). The shadow vram/oam/palette copies
+//   mVideoLoggerRendererInit mmaps also belong to that proxy glue and are
+//   skipped; only the dirty bitmaps that drive packet emission are kept.
 // - The initial-state capture is passed in by the caller as raw savestate
 //   bytes (C calls core->stateSize/mCoreSaveStateNamed internally and pokes
 //   GBASerializedState fields); `rewind` likewise only re-reads the file and
@@ -828,6 +828,13 @@ impl<F: VFile> VideoLogger<F> {
     pub fn renderer_deinit(&mut self) {
         self.vram_dirty_bitmap = Vec::new();
         self.oam_dirty_bitmap = Vec::new();
+    }
+
+    /// Finalize the shared context (flush + footer; mVideoLogContextDestroy's
+    /// on-disk half). The console's end_video_log calls this after
+    /// `renderer_deinit`, in place of the C's context-pointer bookkeeping.
+    pub fn close_context(&mut self) -> io::Result<()> {
+        self.context.borrow_mut().close()
     }
 
     /// mVideoLoggerRendererReset.

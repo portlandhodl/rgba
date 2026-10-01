@@ -29,7 +29,7 @@ libretro frontend uses it; the GB/GBA cores and the SDL frontend path do not.
 | `crates/rgba-core/src/serialize.rs` | `src/core/serialize.c` |
 | `crates/rgba-core/src/patch.rs` | `src/util/patch.c`, `src/util/patch-ips.c`, `src/util/patch-ups.c` (IPS/UPS/BPS via `Patch::load`/`output_size`/`apply`) |
 | `crates/rgba-core/src/patch_fast.rs` | `src/util/patch-fast.c` (in-memory XOR-extent diff, used by mGBA's rewind) |
-| `crates/rgba-core/src/video_logger.rs` | `src/feature/video-logger.c`, `include/mgba/feature/video-logger.h` (mVL video-log record/replay format core; zlib → flate2; `mCore::startVideoLog` hookup, proxy renderers, and Gb/Gba player cores behind `VideoLogPlayer` are integration pending) |
+| `crates/rgba-core/src/video_logger.rs` | `src/feature/video-logger.c`, `include/mgba/feature/video-logger.h` (mVL video-log record/replay format core; zlib → flate2; GB record-side glue in `crates/rgba-gb/src/video_log.rs`; GBA record glue and Gb/Gba player cores behind `VideoLogPlayer` are integration pending) |
 | `crates/rgba-core/src/log.rs` | `src/core/log.c` (subset) |
 | `crates/rgba-gb/src/cpu/*` | `src/sm83/*` |
 | `crates/rgba-gb/src/gb.rs` | `src/gb/gb.c` |
@@ -43,6 +43,7 @@ libretro frontend uses it; the GB/GBA cores and the SDL frontend path do not.
 | `crates/rgba-gb/src/serialize.rs` | `src/gb/serialize.c` |
 | `crates/rgba-gb/src/cheats.rs` | `src/gb/cheats.c` |
 | `crates/rgba-gb/src/overrides.rs` | `src/gb/overrides.c`, `include/mgba/internal/gb/overrides.h` (static tables; config/ini overrides not ported) |
+| `crates/rgba-gb/src/video_log.rs` | `src/gb/extra/proxy.c` (record half: `GBVideoProxyRenderer`'s mVideoLogger endpoints), `src/gb/core.c` (`_GBCoreStartVideoLog`/`_GBCoreEndVideoLog` → `Gb::start_video_log`/`end_video_log`; no vtable shim — the concrete `renderer_*`/scanline/frame entry points tee into the logger, and the frontend's `-v`/`--video-log` starts it) |
 | `crates/rgba-gba/src/cpu/*` | `src/arm/*` |
 | `crates/rgba-gba/src/gba.rs` | `src/gba/gba.c` |
 | `crates/rgba-gba/src/memory.rs` | `src/gba/memory.c` |

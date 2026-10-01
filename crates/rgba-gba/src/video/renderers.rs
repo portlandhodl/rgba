@@ -4,7 +4,13 @@
 // {common.h,video-software.h} and software-private.h.
 //
 // The C's mCacheSet layer is not ported (pure perf cache; identical output).
+//
+// The mVL video-log record half of mgba/src/gba/extra/proxy.c
+// (GBAVideoProxyRendererWrite*/Draw*/FinishFrame) is inlined into the
+// concrete entry points below, since this port has no renderer vtable to
+// shim: each forwards to `gba.video_logger` if a log is being recorded.
 
+use rgba_core::video_logger::VramBlockSource;
 use rgba_core::{mlog, Level};
 
 use crate::gba::*;
@@ -551,7 +557,9 @@ impl Gba {
         sw.blend_effect = BLEND_NONE;
         for i in (0..1024).step_by(2) {
             let entry = self.video.palette[i] as u16 | ((self.video.palette[i + 1] as u16) << 8);
-            self.renderer_write_palette(i as u32, entry);
+            // GBAVideoSoftwareRendererReset calls WritePalette directly,
+            // bypassing the logger like the C bypasses the proxy.
+            self.sw_write_palette(i as u32, entry);
         }
         let sw = &mut self.video.sw;
         sw.blend_dirty = false;
@@ -596,6 +604,10 @@ impl Gba {
             sw.bg[i].dx = 256;
             sw.bg[i].dmy = 256;
             sw.bg[i].y_cache = -1;
+        }
+        // GBAVideoProxyRendererReset's mVideoLoggerRendererReset half.
+        if let Some(logger) = self.video_logger.as_mut() {
+            logger.logger.renderer_reset();
         }
     }
 
@@ -665,8 +677,32 @@ impl Gba {
             && (sw.blend_effect == BLEND_BRIGHTEN || sw.blend_effect == BLEND_DARKEN);
     }
 
-    /// GBAVideoSoftwareRendererWriteVideoRegister
+    /// GBAVideoSoftwareRendererWriteVideoRegister, prefixed by
+    /// GBAVideoProxyRendererWriteVideoRegister's logger half (extra/proxy.c):
+    /// the C proxy masks the value per register, drops writes above
+    /// GBA_REG_BLDY, then emits the dirty packet before the backend runs.
+    /// The backend body below re-applies the same masks where they exist, so
+    /// feeding it the unmasked value keeps the emulation path unchanged and
+    /// only the packet stream matches the C.
     pub fn renderer_write_video_register(&mut self, address: u32, value: u16) -> u16 {
+        if self.video_logger.is_some() && address <= GBA_REG_BLDY {
+            let mut logged = value;
+            match address {
+                GBA_REG_DISPCNT => logged &= 0xFFF7,
+                GBA_REG_BG0CNT | GBA_REG_BG1CNT => logged &= 0xDFFF,
+                // GBA_REG_BG2CNT | GBA_REG_BG3CNT: &= 0xFFFF in the C.
+                GBA_REG_BG0HOFS | GBA_REG_BG0VOFS | GBA_REG_BG1HOFS | GBA_REG_BG1VOFS
+                | GBA_REG_BG2HOFS | GBA_REG_BG2VOFS | GBA_REG_BG3HOFS | GBA_REG_BG3VOFS => {
+                    logged &= 0x01FF
+                }
+                _ => {}
+            }
+            self.video_logger
+                .as_mut()
+                .unwrap()
+                .logger
+                .write_video_register(address, logged);
+        }
         let sw = &mut self.video.sw;
         let mut value = value;
         match address {
@@ -948,14 +984,30 @@ impl Gba {
         }
     }
 
-    pub fn renderer_write_vram(&mut self, _address: u32) {
+    /// GBAVideoSoftwareRendererWriteVRAM + the proxy's logger half
+    /// (GBAVideoProxyRendererWriteVRAM): the log just dirty-marks the
+    /// containing 0x1000-byte block; the bytes are dumped at scanline time.
+    pub fn renderer_write_vram(&mut self, address: u32) {
+        if let Some(logger) = self.video_logger.as_mut() {
+            logger.logger.write_vram(address);
+        }
         self.video.sw.scanline_dirty = [0xFFFFFFFF; 5];
         for bg in self.video.sw.bg.iter_mut() {
             bg.y_cache = -1;
         }
     }
 
-    pub fn renderer_write_oam(&mut self, _oam: u32) {
+    /// GBAVideoSoftwareRendererWriteOAM + the proxy's logger half
+    /// (GBAVideoProxyRendererWriteOAM). `oam` is the halfword index; the
+    /// logged value is the freshly stored halfword, read out of OAM like the
+    /// C's `proxyRenderer->d.oam->raw[oam]` (the bus store lands before this
+    /// callback).
+    pub fn renderer_write_oam(&mut self, oam: u32) {
+        if self.video_logger.is_some() {
+            let i = (oam as usize) << 1;
+            let value = u16::from_le_bytes([self.video.oam[i], self.video.oam[i + 1]]);
+            self.video_logger.as_mut().unwrap().logger.write_oam(oam, value);
+        }
         self.video.sw.oam_dirty = true;
         self.video.sw.scanline_dirty = [0xFFFFFFFF; 5];
     }
@@ -981,8 +1033,19 @@ impl Gba {
         }
     }
 
-    /// GBAVideoSoftwareRendererFinishFrame
+    /// GBAVideoSoftwareRendererFinishFrame + the proxy's logger half
+    /// (GBAVideoProxyRendererFinishFrame with flushScanline < 0, the record
+    /// default): frame boundary packet, then the end-of-frame flush.
     pub fn renderer_finish_frame(&mut self) {
+        self.sw_finish_frame();
+        if let Some(logger) = self.video_logger.as_mut() {
+            logger.logger.finish_frame();
+            let _ = logger.logger.flush();
+        }
+    }
+
+    /// GBAVideoSoftwareRendererFinishFrame
+    fn sw_finish_frame(&mut self) {
         let sw = &mut self.video.sw;
         sw.next_y = 0;
         sw.bg[2].sx = sw.bg[2].ref_x;
@@ -1010,7 +1073,18 @@ impl Gba {
         }
     }
 
+    /// GBAVideoSoftwareRendererWritePalette + the proxy's logger half
+    /// (GBAVideoProxyRendererWritePalette): the packet carries the same
+    /// (byte-addressed) address and raw 555 value the callback received.
     pub fn renderer_write_palette(&mut self, address: u32, value: u16) {
+        if let Some(logger) = self.video_logger.as_mut() {
+            logger.logger.write_palette(address, value);
+        }
+        self.sw_write_palette(address, value);
+    }
+
+    /// The backend body of GBAVideoSoftwareRendererWritePalette.
+    fn sw_write_palette(&mut self, address: u32, value: u16) {
         let sw = &mut self.video.sw;
         let color = color_from_555(value);
         let palette_idx = (address >> 1) as usize;
@@ -1177,8 +1251,20 @@ impl Gba {
 // The scanline composer (DrawScanline) + preprocessing and per-mode drawing.
 
 impl Gba {
-    /// GBAVideoSoftwareRendererDrawScanline
+    /// GBAVideoProxyRendererDrawScanline (record path): draw the scanline,
+    /// then the logger dumps any still-dirty VRAM blocks and emits the
+    /// scanline packet.
     pub fn renderer_draw_scanline(&mut self, y: i32) {
+        self.sw_draw_scanline(y);
+        if self.video_logger.is_some() {
+            let mut vl = self.video_logger.take().unwrap();
+            vl.logger.draw_scanline(&mut VramLogShim(&mut self.video.vram), y);
+            self.video_logger = Some(vl);
+        }
+    }
+
+    /// GBAVideoSoftwareRendererDrawScanline
+    fn sw_draw_scanline(&mut self, y: i32) {
         self.video.sw.next_y = if y == VIDEO_VERTICAL_PIXELS - 1 {
             0
         } else {
@@ -2793,6 +2879,21 @@ impl Gba {
             self.video.sw.highlight_palette[i]
         } else {
             self.video.sw.normal_palette[i]
+        }
+    }
+}
+
+/// mVideoLogger.vramBlock for the record path (proxy.c's `_vramBlock`
+/// equivalent): dump one dirty 0x1000-byte VRAM block straight out of the
+/// console's VRAM. `address` is a byte offset, matching the C.
+struct VramLogShim<'a>(&'a mut [u8]);
+
+impl VramBlockSource for VramLogShim<'_> {
+    fn vram_block(&mut self, address: u32, out: &mut [u8]) {
+        let start = address as usize;
+        let end = (start + out.len()).min(self.0.len());
+        if start < end {
+            out[..end - start].copy_from_slice(&self.0[start..end]);
         }
     }
 }

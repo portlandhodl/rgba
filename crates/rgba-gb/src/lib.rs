@@ -15,6 +15,7 @@ pub mod serialize;
 pub mod sio;
 pub mod timer;
 pub mod video;
+pub mod video_log;
 
 pub use gb::{EventId, Gb, GbModel, GameInfo};
 

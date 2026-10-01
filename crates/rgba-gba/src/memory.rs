@@ -3,6 +3,12 @@
 // mgba/src/gba/memory.c. Cartridge side-channel systems (GPIO/RTC, rumble,
 // tilt, matrix, e-Reader, unlicensed carts) get their own modules; this file
 // wires them into the bus.
+//
+// Renderer write callback ABI (GBAVideoRenderer.writePalette / writeVRAM /
+// writeOAM in the C): palette and VRAM callbacks receive a BYTE address into
+// the buffer, OAM receives a HALFWORD index (offset >> 1). These feed the
+// mVL video log (proxy.c) verbatim, so the packet stream stays in the C's
+// address space.
 
 use rgba_core::timing::Timing;
 use rgba_core::{mlog, Level};
@@ -931,8 +937,8 @@ impl Gba {
                 let old = u32::from_le_bytes(self.video.palette[i..i + 4].try_into().unwrap());
                 if old != value as u32 {
                     self.video.palette[i..i + 4].copy_from_slice(&value.to_le_bytes());
-                    self.renderer_write_palette(((i + 2) >> 1) as u32, ((value as u32) >> 16) as u16);
-                    self.renderer_write_palette((i >> 1) as u32, value as u16);
+                    self.renderer_write_palette((i + 2) as u32, ((value as u32) >> 16) as u16);
+                    self.renderer_write_palette(i as u32, value as u16);
                 }
                 wait += self.memory.waitstates_nonseq32[GBA_REGION_PALETTE_RAM as usize];
             }
@@ -946,8 +952,8 @@ impl Gba {
                         let old = u32::from_le_bytes(self.video.vram[i..i + 4].try_into().unwrap());
                         if old != value as u32 {
                             self.video.vram[i..i + 4].copy_from_slice(&value.to_le_bytes());
-                            self.renderer_write_vram(((i + 2) >> 1) as u32);
-                            self.renderer_write_vram((i >> 1) as u32);
+                            self.renderer_write_vram((i + 2) as u32);
+                            self.renderer_write_vram(i as u32);
                         }
                     }
                 } else {
@@ -955,8 +961,8 @@ impl Gba {
                     let old = u32::from_le_bytes(self.video.vram[i..i + 4].try_into().unwrap());
                     if old != value as u32 {
                         self.video.vram[i..i + 4].copy_from_slice(&value.to_le_bytes());
-                        self.renderer_write_vram(((i + 2) >> 1) as u32);
-                        self.renderer_write_vram((i >> 1) as u32);
+                        self.renderer_write_vram((i + 2) as u32);
+                        self.renderer_write_vram(i as u32);
                     }
                 }
                 let _ = mode3_obj_limit;
@@ -972,8 +978,8 @@ impl Gba {
                 let old = u32::from_le_bytes(self.video.oam[i..i + 4].try_into().unwrap());
                 if old != value as u32 {
                     self.video.oam[i..i + 4].copy_from_slice(&value.to_le_bytes());
-                    self.renderer_write_oam(((i >> 1) / 2) as u32);
-                    self.renderer_write_oam((((i + 2) >> 1) / 2) as u32);
+                    self.renderer_write_oam((i >> 1) as u32);
+                    self.renderer_write_oam(((i >> 1) + 1) as u32);
                 }
             }
             GBA_REGION_ROM0 | GBA_REGION_ROM0_EX | GBA_REGION_ROM1 | GBA_REGION_ROM1_EX
@@ -1028,7 +1034,7 @@ impl Gba {
                 if old != value {
                     self.video.palette[i] = value as u8;
                     self.video.palette[i + 1] = (value >> 8) as u8;
-                    self.renderer_write_palette((i >> 1) as u32, value);
+                    self.renderer_write_palette(i as u32, value);
                 }
             }
             GBA_REGION_VRAM => {
@@ -1041,7 +1047,7 @@ impl Gba {
                         if value != old {
                             self.video.vram[i] = value as u8;
                             self.video.vram[i + 1] = (value >> 8) as u8;
-                            self.renderer_write_vram((i >> 1) as u32);
+                            self.renderer_write_vram(i as u32);
                         }
                     }
                 } else {
@@ -1050,7 +1056,7 @@ impl Gba {
                     if value != old {
                         self.video.vram[i] = value as u8;
                         self.video.vram[i + 1] = (value >> 8) as u8;
-                        self.renderer_write_vram((i >> 1) as u32);
+                        self.renderer_write_vram(i as u32);
                     }
                 }
                 if self.video.stall_mask != 0
@@ -1065,7 +1071,7 @@ impl Gba {
                 if value != old {
                     self.video.oam[i] = value as u8;
                     self.video.oam[i + 1] = (value >> 8) as u8;
-                    self.renderer_write_oam(((i >> 1) / 2) as u32);
+                    self.renderer_write_oam((i >> 1) as u32);
                 }
             }
             GBA_REGION_ROM0 => {
@@ -1191,7 +1197,7 @@ impl Gba {
                     if old != new {
                         self.video.vram[i] = value;
                         self.video.vram[i + 1] = value;
-                        self.renderer_write_vram((i >> 1) as u32);
+                        self.renderer_write_vram(i as u32);
                     }
                 }
                 if self.video.stall_mask != 0 {
@@ -1466,9 +1472,12 @@ impl Gba {
                 stm_loop_body!(|g: &mut Gba, a: u32, v: u32, w: &mut i32| {
                     let i = (a as usize) & (GBA_SIZE_PALETTE_RAM - 4);
                     *w += g.memory.waitstates_nonseq32[GBA_REGION_PALETTE_RAM as usize];
-                    g.video.palette[i..i + 4].copy_from_slice(&v.to_le_bytes());
-                    g.renderer_write_palette(((i + 2) >> 1) as u32, (v >> 16) as u16);
-                    g.renderer_write_palette((i >> 1) as u32, v as u16);
+                    let old = u32::from_le_bytes(g.video.palette[i..i + 4].try_into().unwrap());
+                    if old != v {
+                        g.video.palette[i..i + 4].copy_from_slice(&v.to_le_bytes());
+                        g.renderer_write_palette((i + 2) as u32, (v >> 16) as u16);
+                        g.renderer_write_palette(i as u32, v as u16);
+                    }
                 });
             }
             GBA_REGION_VRAM => {
@@ -1484,16 +1493,23 @@ impl Gba {
                     let old = u32::from_le_bytes(g.video.vram[i..i + 4].try_into().unwrap());
                     if old != v {
                         g.video.vram[i..i + 4].copy_from_slice(&v2);
-                        g.renderer_write_vram(((i + 2) >> 1) as u32);
-                        g.renderer_write_vram((i >> 1) as u32);
+                        g.renderer_write_vram((i + 2) as u32);
+                        g.renderer_write_vram(i as u32);
                     }
                     let _ = limit;
                 });
             }
             GBA_REGION_OAM => {
+                // STORE_OAM: store + both writeOAM callbacks (the port was
+                // missing these; oam_dirty never got set on STM-to-OAM).
                 stm_loop_body!(|g: &mut Gba, a: u32, v: u32, _w: &mut i32| {
                     let i = (a as usize) & (crate::video::GBA_SIZE_OAM as usize - 4);
-                    g.video.oam[i..i + 4].copy_from_slice(&v.to_le_bytes());
+                    let old = u32::from_le_bytes(g.video.oam[i..i + 4].try_into().unwrap());
+                    if old != v {
+                        g.video.oam[i..i + 4].copy_from_slice(&v.to_le_bytes());
+                        g.renderer_write_oam((i >> 1) as u32);
+                        g.renderer_write_oam(((i >> 1) + 1) as u32);
+                    }
                 });
             }
             GBA_REGION_ROM0 | GBA_REGION_ROM0_EX | GBA_REGION_ROM1 | GBA_REGION_ROM1_EX | GBA_REGION_ROM2 | GBA_REGION_ROM2_EX => {
@@ -1554,14 +1570,23 @@ impl Gba {
                 old_value = i16::from_le_bytes([self.video.vram[i], self.video.vram[i + 1]]);
                 self.video.vram[i] = value as u8;
                 self.video.vram[i + 1] = (value >> 8) as u8;
-                self.renderer_write_vram((i >> 1) as u32);
+                self.renderer_write_vram(i as u32);
             }
             GBA_REGION_OAM => {
                 let i = (address as usize) & (video::GBA_SIZE_OAM - 2);
                 old_value = i16::from_le_bytes([self.video.oam[i], self.video.oam[i + 1]]);
                 self.video.oam[i] = value as u8;
                 self.video.oam[i + 1] = (value >> 8) as u8;
-                self.renderer_write_oam(((i >> 1) / 2) as u32);
+                self.renderer_write_oam((i >> 1) as u32);
+            }
+            GBA_REGION_PALETTE_RAM => {
+                // The C's GBAPatch16 palette case (memory.c) also notifies the
+                // renderer; the port was missing it.
+                let i = (address as usize) & (GBA_SIZE_PALETTE_RAM - 2);
+                old_value = i16::from_le_bytes([self.video.palette[i], self.video.palette[i + 1]]);
+                self.video.palette[i] = value as u8;
+                self.video.palette[i + 1] = (value >> 8) as u8;
+                self.renderer_write_palette(i as u32, value as u16);
             }
             _ => {
                 mlog!(Level::Warn, rgba_core::log::GBA_MEM, "Bad memory Patch16: 0x{:08X}", address);
@@ -1589,21 +1614,22 @@ impl Gba {
                 let i = (address as usize) & (GBA_SIZE_PALETTE_RAM - 4);
                 old_value = i32::from_le_bytes(self.video.palette[i..i + 4].try_into().unwrap());
                 self.video.palette[i..i + 4].copy_from_slice(&value.to_le_bytes());
-                self.renderer_write_palette((i >> 1) as u32 + 1, ((value >> 16) & 0xFFFF) as u16);
-                self.renderer_write_palette((i >> 1) as u32, value as u16);
+                self.renderer_write_palette(i as u32, value as u16);
+                self.renderer_write_palette((i + 2) as u32, ((value >> 16) & 0xFFFF) as u16);
             }
             GBA_REGION_VRAM => {
                 let i = if (address & 0x0001FFFF) < GBA_SIZE_VRAM as u32 { (address & 0x0001FFFC) as usize } else { (address & 0x00017FFC) as usize };
                 old_value = i32::from_le_bytes(self.video.vram[i..i + 4].try_into().unwrap());
                 self.video.vram[i..i + 4].copy_from_slice(&value.to_le_bytes());
-                self.renderer_write_vram((i >> 1) as u32 + 1);
-                self.renderer_write_vram((i >> 1) as u32);
+                self.renderer_write_vram(i as u32);
+                self.renderer_write_vram((i + 2) as u32);
             }
             GBA_REGION_OAM => {
                 let i = (address as usize) & (video::GBA_SIZE_OAM - 4);
                 old_value = i32::from_le_bytes(self.video.oam[i..i + 4].try_into().unwrap());
                 self.video.oam[i..i + 4].copy_from_slice(&value.to_le_bytes());
-                self.renderer_write_oam(((i >> 1) / 2) as u32);
+                self.renderer_write_oam((i >> 1) as u32);
+                self.renderer_write_oam(((i >> 1) + 1) as u32);
             }
             GBA_REGION_ROM0 | GBA_REGION_ROM0_EX | GBA_REGION_ROM1 | GBA_REGION_ROM1_EX
             | GBA_REGION_ROM2 | GBA_REGION_ROM2_EX => {

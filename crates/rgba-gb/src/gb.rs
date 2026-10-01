@@ -200,6 +200,9 @@ pub struct Gb {
     /// The debugger (mDebugger + SM83Debugger platform, hung off
     /// cpu->components in the C).
     pub debugger: Option<Box<crate::debugger::GbDebugger>>,
+    /// Record-side mVL video log (_GBCoreStartVideoLog's proxyRenderer +
+    /// logContext); while Some, the renderer entry points tee into it.
+    pub video_logger: Option<crate::video_log::GbVideoLog>,
     /// Memory-shim installed flag (C: SM83/ARM memory shim function pointers).
     pub dbg_watchpoints_active: bool,
 
@@ -242,6 +245,7 @@ impl Gb {
             double_speed: false,
             cheats: CheatDevice::new(),
             debugger: None,
+            video_logger: None,
             dbg_watchpoints_active: false,
             keys: 0,
             allow_opposing_directions: false,

@@ -106,6 +106,12 @@ pub struct Gba {
     /// GBAMemory.unl (cart/unlicensed.rs)
     pub unl: UnlCart,
     pub video: Video,
+    /// The mVL video-log recorder endpoint (mgba/src/gba/core.c's
+    /// `logContext`+`vlProxy` pair, minus the proxy renderer shim —
+    /// GBAVideoProxyRenderer*'s logger halves are inlined into the concrete
+    /// renderer entry points in video/renderers.rs). Set by
+    /// `start_video_log`, torn down by `end_video_log`.
+    pub video_logger: Option<Box<crate::video_log::GbaVideoLog>>,
     pub audio: Audio,
     pub sio: Sio,
     pub savedata: Savedata,
@@ -191,6 +197,7 @@ impl Gba {
             matrix: Matrix::new(),
             unl: UnlCart::new(),
             video: Video::new(),
+            video_logger: None,
             audio: Audio::new(),
             sio: Sio::new(),
             savedata: Savedata::new(),
