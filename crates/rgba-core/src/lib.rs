@@ -11,6 +11,7 @@ pub mod core;
 pub mod log;
 pub mod patch;
 pub mod patch_fast;
+pub mod rewind;
 pub mod ring;
 pub mod serialize;
 pub mod timing;

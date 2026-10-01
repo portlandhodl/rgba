@@ -70,6 +70,8 @@ pub enum EventId {
     SioLockstep = 21,
     /// "GBA SIO Lockstep"/dolphin (gba/sio/dolphin.c, priority 0x80)
     SioDolphin = 22,
+    /// "GBA Unlicensed Multicart Settle" (gba/cart/unlicensed.c, priority 0x71)
+    UnlCartSettle = 23,
 }
 
 impl EventId {
@@ -81,6 +83,7 @@ impl EventId {
             EventId::Timer0 | EventId::Timer1 | EventId::Timer2 | EventId::Timer3 => 0x20,
             EventId::Sio => 0x80,
             EventId::SioLockstep | EventId::SioDolphin => 0x80,
+            EventId::UnlCartSettle => 0x71,
             EventId::IrqEvent => 0,
         }
     }
@@ -393,6 +396,7 @@ impl Gba {
             x if x == EventId::Timer1 as u32 => self.timer_fired(1, timing, cycles_late as u32),
             x if x == EventId::Timer2 as u32 => self.timer_fired(2, timing, cycles_late as u32),
             x if x == EventId::Timer3 as u32 => self.timer_fired(3, timing, cycles_late as u32),
+            x if x == EventId::UnlCartSettle as u32 => self.multicart_settle(cycles_late as u32),
             x if x == EventId::Sio as u32 => self.sio_complete_event(timing, cycles_late as u32),
             x if x == EventId::SioDolphin as u32 => {
                 // GBASIODolphinProcessEvents

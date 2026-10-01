@@ -43,6 +43,9 @@ struct Args {
     /// Start in the CLI debugger (mGBA -d)
     #[arg(long)]
     debug: bool,
+    /// Enable rewind (hold R to rewind, one state per 30 frames kept in RAM)
+    #[arg(long)]
+    rewind: bool,
 }
 
 const KEYMAP: [(Scancode, u32); 16] = [
@@ -209,6 +212,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut events = sdl.event_pump().map_err(|e| e.to_string())?;
 
     let mut save_states: Vec<Vec<u8>> = Vec::new();
+    let mut rewind_ctx = if args.rewind {
+        Some(rgba_core::rewind::RewindContext::new(300))
+    } else {
+        None
+    };
     let mut frame_total: u64 = 0;
     let start = std::time::Instant::now();
 
@@ -258,6 +266,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             core.run_frame();
         }
         frame_total += 1;
+
+        if let Some(rc) = rewind_ctx.as_mut() {
+            let kb2 = events.keyboard_state();
+            if kb2.is_scancode_pressed(Scancode::R) {
+                if !rc.restore(&mut *core, 2) {
+                    // empty rewind history
+                }
+            } else if frame_total % 30 == 0 {
+                rc.append(&mut *core);
+            }
+        }
 
         // Video
         let buf = core.video_buffer();

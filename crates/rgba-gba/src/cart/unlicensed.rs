@@ -195,16 +195,16 @@ impl Gba {
                     GBA_MULTICART_CFG_BANK => {
                         if !self.unl.multi.locked {
                             self.unl.multi.bank = value >> 4;
-                            // TODO(timing): needs EventId::UnlCartSettle (C: "GBA
-                            // Unlicensed Multicart Settle", priority 0x71):
-                            //   deschedule + schedule in MULTI_SETTLE cycles.
+                            self.deschedule(crate::gba::EventId::UnlCartSettle);
+                            self.schedule(crate::gba::EventId::UnlCartSettle, MULTI_SETTLE);
                         }
                     }
                     GBA_MULTICART_CFG_OFFSET => {
                         if !self.unl.multi.locked {
-                            // note: C schedules here before the lock check below.
+                            // note: C schedules before the lock check, matching.
                             self.unl.multi.offset = value;
-                            // TODO(timing): EventId::UnlCartSettle deschedule+schedule(MULTI_SETTLE)
+                            self.deschedule(crate::gba::EventId::UnlCartSettle);
+                            self.schedule(crate::gba::EventId::UnlCartSettle, MULTI_SETTLE);
                             if self.unl.multi.offset & 0x80 != 0 {
                                 self.unl.multi.locked = true;
                             }
@@ -213,7 +213,8 @@ impl Gba {
                     GBA_MULTICART_CFG_SIZE => {
                         self.unl.multi.size = 0x40 - (value & 0x3F);
                         if !self.unl.multi.locked {
-                            // TODO(timing): EventId::UnlCartSettle deschedule+schedule(MULTI_SETTLE)
+                            self.deschedule(crate::gba::EventId::UnlCartSettle);
+                            self.schedule(crate::gba::EventId::UnlCartSettle, MULTI_SETTLE);
                         }
                     }
                     GBA_MULTICART_CFG_SRAM => {
@@ -255,8 +256,7 @@ impl Gba {
     }
 
     /// _multicartSettle — the "GBA Unlicensed Multicart Settle" timing event
-    /// callback. TODO(timing): dispatch from process_event via
-    /// EventId::UnlCartSettle (priority 0x71).
+    /// callback (priority 0x71), dispatched from process_event.
     pub fn multicart_settle(&mut self, _cycles_late: u32) {
         mlog!(
             Level::Info,
