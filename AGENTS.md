@@ -18,8 +18,14 @@ mGBA file it was ported from.
 | `crates/rgba-core/src/timing.rs` | `src/core/timing.c`, `include/mgba/core/timing.h` |
 | `crates/rgba-core/src/core.rs` | `include/mgba/core/core.h` (the `mCore` vtable → `Core` trait) |
 | `crates/rgba-core/src/cheats.rs` | `src/core/cheats.c` |
-| `crates/rgba-core/src/blip.rs` | `src/third-party/blip_buf/blip_buf.c` |
-| `crates/rgba-core/src/ring.rs` | `src/util/ring-fifo.c` / `circle-buffer.c` |
+| `crates/rgba-core/src/mem_search.rs` | `src/core/mem-search.c`, `include/mgba/core/mem-search.h` (memory-value cheat search; console input via `MemSearchOps` trait instead of the `mCore` vtable; state lives in the caller-held `Vec<SearchResult>`) |
+| `crates/rgba-core/src/ring.rs` | `src/util/ring-fifo.c` / `circle-buffer.c` (+ the stereo `mAudioBuffer` view from `src/util/audio-buffer.c`: `available_frames`/`peek_frame`/`drop_frames`) |
+| `crates/rgba-core/src/interpolator.rs` | `src/util/interpolator.c`, `include/mgba-util/interpolator.h` (sinc + cosine; vtable → `Interpolator` enum; C's quirks preserved) |
+| `crates/rgba-core/src/audio_resampler.rs` | `src/util/audio-resampler.c`, `include/mgba-util/audio-resampler.h` (source/dest + rates are per-call `process` params instead of stored pointers; what the SDL frontend uses, `InterpolatorType::Sinc`) |
+| `crates/rgba-core/src/convolve.rs` | `src/util/convolve.c`, `include/mgba-util/convolve.h` |
+
+Note: `src/third-party/blip_buf` is not ported — in this mGBA snapshot only the
+libretro frontend uses it; the GB/GBA cores and the SDL frontend path do not.
 | `crates/rgba-core/src/serialize.rs` | `src/core/serialize.c` |
 | `crates/rgba-core/src/patch.rs` | `src/util/patch.c`, `src/util/patch-ips.c`, `src/util/patch-ups.c` (IPS/UPS/BPS via `Patch::load`/`output_size`/`apply`) |
 | `crates/rgba-core/src/patch_fast.rs` | `src/util/patch-fast.c` (in-memory XOR-extent diff, used by mGBA's rewind) |
@@ -45,10 +51,12 @@ mGBA file it was ported from.
 | `crates/rgba-gba/src/video.rs` | `src/gba/video.c` (+ `src/gba/renderers/*` software renderer) |
 | `crates/rgba-gba/src/audio.rs` | `src/gba/audio.c` |
 | `crates/rgba-gba/src/timers.rs` | `src/gba/timer.c` |
-| `crates/rgba-gba/src/sio/mod.rs` | `src/gba/sio.c` (driver vtable → `SioDriver` enum) |
+| `crates/rgba-gba/src/sio/mod.rs` | `src/gba/sio.c` (driver vtable → `SioDriver` enum; variants: `Gbp`, `Dolphin`, `Lockstep`, `Battlechip` — the latter's state machine lives in `cart/battlechip.rs`) |
 | `crates/rgba-gba/src/sio/lockstep.rs` | `src/gba/sio/lockstep.c`, `include/mgba/internal/gba/sio/lockstep.h`, `include/mgba/core/lockstep.h` (single-threaded cooperative model: `Rc<RefCell<GbaSioLockstep>>` shared between linked `Gba`s, node event = `EventId::SioLockstep`; driver savestate via `Gba::sio_save_extra_state`/`sio_load_extra_state`, mirroring core.c's extdata slot) |
 | `crates/rgba-gba/src/savedata.rs` | `src/gba/savedata.c` |
+| `crates/rgba-gba/src/sharkport.rs` | `src/gba/sharkport.c`, `include/mgba/internal/gba/sharkport.h` (SharkPort `.sps`/`.xps` + GameShark `.gsv` savedata container import/export; VFile → byte slices; savedata container only, no savestate is produced) |
 | `crates/rgba-gba/src/cart/mod.rs` | `src/gba/cart/gpio.c` (GPIO: RTC, rumble, light, gyro/tilt) |
+| `crates/rgba-gba/src/cart/battlechip.rs` | `src/gba/extra/battlechip.c` (BattleChip/Progress/Beast Link Gate; struct/flavors live in `include/mgba/gba/interface.h` in this snapshot; it is a link-port SIO driver, not a `HW_*` cart device — installed as the `SioDriver::Battlechip` variant via `Gba::attach_battlechip_gate`, mirroring `setPeripheral(mPERIPH_GBA_LINK_PORT)`) |
 | `crates/rgba-gba/src/cart/ereader.rs` | `src/gba/cart/ereader.c` (register file, dotcode strip gen, serial state machine; no image-scan/frontend bits) |
 | `crates/rgba-gba/src/cart/unlicensed.rs` | `src/gba/cart/unlicensed.c`, `src/gba/cart/vfame.c` |
 | `crates/rgba-gba/src/cart/matrix.rs` | `src/gba/cart/matrix.c` |
@@ -67,7 +75,7 @@ mGBA file it was ported from.
 | `crates/rgba-gba/src/arm/decoder.rs` | `src/arm/decoder.c`, `decoder-arm.c`, `decoder-thumb.c` (debuggers/trace only) |
 | `crates/rgba-gb/src/debugger.rs` | `src/sm83/debugger/*`, `src/gb/debugger/debugger.c` |
 | `crates/rgba-gba/src/debugger.rs` | `src/arm/debugger/*` + GBA glue from `src/gba/gba.c`/`core.c` |
-| `crates/rgba/src/*` | SDL2 frontend (like `src/platform/sdl/sdl-main.c`; `--patch` mirrors `mCore::loadPatch` by patching the ROM buffer before `load_rom`) |
+| `crates/rgba/src/*` | SDL2 frontend (like `src/platform/sdl/sdl-main.c`; `--patch` mirrors `mCore::loadPatch` by patching the ROM buffer before `load_rom`; per-frame audio resample into the SDL queue mirrors `src/platform/sdl/sdl-audio.c`'s callback with `mINTERPOLATOR_SINC` and `fauxClock == 1`) |
 
 ## Conventions
 

@@ -4,7 +4,9 @@
 
 use std::path::{Path, PathBuf};
 
+use rgba_core::audio_resampler::{AudioResampler, InterpolatorType};
 use rgba_core::core::Core;
+use rgba_core::ring::RingI16;
 use rgba_debugger::cli::{CliBackend, CliDebugger};
 use rgba_gba::gba::Gba;
 use rgba_gb::gb::{Gb, GbModel};
@@ -46,6 +48,9 @@ struct Args {
     /// Enable rewind (hold R to rewind, one state per 30 frames kept in RAM)
     #[arg(long)]
     rewind: bool,
+    /// Force Game Boy Player detection screen check (mGBA gba.forceGbp)
+    #[arg(long)]
+    gbp: bool,
 }
 
 const KEYMAP: [(Scancode, u32); 16] = [
@@ -147,6 +152,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         if let Some(patch_path) = &args.patch {
             patch_rom_buffer(&mut rom, patch_path, rgba_gba::memory::GBA_SIZE_ROM0, false);
         }
+        g.force_gbp = args.gbp; // mGBA config gba.forceGbp
         g.load_rom(rom);
         g.arm_reset();
         if args.debug {
@@ -194,8 +200,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut texture =
         texture_creator.create_texture_streaming(PixelFormatEnum::ARGB8888, w0, h0)?;
 
-    // Audio queue at host rate; core pushes at its native rate, we resample
-    // with a nearest-neighbor upsample (good enough).
+    // Audio queue at host rate; the core pushes interleaved stereo at its
+    // native rate into a ring, and each frame we resample into the device
+    // rate exactly like mGBA's SDL frontend (src/platform/sdl/sdl-audio.c
+    // _mSDLAudioCallback): sinc mAudioResampler, source = core buffer
+    // (consumed), destination = a `samples`-frame staging buffer drained
+    // into the SDL queue. fauxClock is 1 (no fps-target override).
     let audio = sdl.audio().map_err(|e| e.to_string())?;
     let spec = sdl2::audio::AudioSpecDesired {
         freq: Some(args.rate),
@@ -206,8 +216,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .open_queue::<i16, _>(None, &spec)
         .map_err(|e| e.to_string())?;
 
-    let src_rate = core.audio_sample_rate().max(1);
-    let rate_ratio = args.rate as f32 / src_rate as f32;
+    let src_rate = core.audio_sample_rate().max(1) as f64;
+    let dst_rate = device.spec().freq.max(1) as f64; // obtainedSpec.freq
+    let mut resampler = AudioResampler::new(InterpolatorType::Sinc);
+    // mAudioBufferInit(&context->buffer, context->samples, 2): 2048 frames.
+    let mut resampled = RingI16::new(2048 * 2);
 
     let mut events = sdl.event_pump().map_err(|e| e.to_string())?;
 
@@ -288,28 +301,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         canvas.copy(&texture, None, None).map_err(|e| e.to_string())?;
         canvas.present();
 
-        // Audio: drain + naive upsample
+        // Audio: resample + queue (mAudioResamplerProcess + mAudioBufferRead
+        // into SDL, single-threaded so no mCoreSyncLockAudio needed).
         {
-            let ring = core.audio_buffer();
-            let n = ring.len();
-            let mut frames: Vec<i16> = Vec::with_capacity(n * 2 + 64);
-            while let Some(l) = ring.pop() {
-                let _r = ring.pop().unwrap_or(0);
-                frames.push(l);
-                frames.push(_r);
-            }
-            let mut out = Vec::new();
-            let stereo_frames = frames.len() / 2;
-            let out_frames = (stereo_frames as f32 * rate_ratio) as usize;
-            for i in 0..out_frames {
-                let idx = ((i as f32) / rate_ratio) as usize * 2;
-                let l = frames.get(idx).copied().unwrap_or(0);
-                let r = frames.get(idx + 1).copied().unwrap_or(0);
-                out.push(l);
-                out.push(r);
-            }
-            if !out.is_empty() {
-                let _ = device.queue_audio(&out);
+            let produced = resampler.process(
+                core.audio_buffer(),
+                src_rate,
+                true,
+                &mut resampled,
+                dst_rate,
+            );
+            let _ = produced;
+            let avail = resampled.len();
+            if avail > 0 {
+                let mut buf = vec![0i16; avail];
+                let got = resampled.read_into(&mut buf);
+                let _ = device.queue_audio(&buf[..got]);
             }
             if device.size() > 16 * 1024 {
                 // overflow guard

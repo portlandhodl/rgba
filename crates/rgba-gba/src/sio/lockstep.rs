@@ -1425,7 +1425,9 @@ impl Gba {
     pub fn sio_lockstep_player_id(&self) -> Option<i32> {
         match &self.sio.driver {
             SioDriver::Lockstep(node) => node.player_id(),
-            SioDriver::None | SioDriver::Gbp | SioDriver::Dolphin => None,
+            SioDriver::None | SioDriver::Gbp | SioDriver::Dolphin | SioDriver::Battlechip(_) => {
+                None
+            }
         }
     }
 

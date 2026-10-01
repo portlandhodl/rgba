@@ -15,6 +15,7 @@ pub mod lockstep;
 use rgba_core::timing::Timing;
 use rgba_core::{mlog, Level};
 
+use crate::cart::battlechip::BattleChipGate;
 use crate::gba::{EventId, Gba};
 use crate::io::*;
 use crate::sio::lockstep::GbaSioLockstepNode;
@@ -147,6 +148,9 @@ pub enum SioDriver {
     /// separate: driver variant presence == "installed".
     Dolphin,
     Lockstep(GbaSioLockstepNode),
+    /// The BattleChip Gate (extra/battlechip.c). Hooks: init, writeSIOCNT,
+    /// handlesMode, connectedDevices, finishMultiplayer.
+    Battlechip(BattleChipGate),
 }
 
 impl Default for SioDriver {
@@ -218,11 +222,12 @@ impl Gba {
     /// GBASIOReset
     pub fn sio_reset(&mut self) {
         // The C resets the driver before clearing the registers.
-        let driver = std::mem::take(&mut self.sio.driver);
-        if let SioDriver::Lockstep(mut node) = driver {
+        let mut driver = std::mem::take(&mut self.sio.driver);
+        if let SioDriver::Lockstep(node) = &mut driver {
             node.reset(self);
-            self.sio.driver = SioDriver::Lockstep(node);
         }
+        // Other drivers have no reset hook in the C; reinstall either way.
+        self.sio.driver = driver;
         self.sio.rcnt = 0x8000;
         self.sio.siocnt = 0;
         self.sio.mode = SioMode::Invalid;
@@ -259,6 +264,7 @@ impl Gba {
                 }
             }
             SioDriver::Lockstep(node) => node.init(self),
+            SioDriver::Battlechip(gate) => gate.init(),
         };
         if !ok {
             if let SioDriver::Lockstep(node) = &mut driver {
@@ -278,6 +284,8 @@ impl Gba {
     fn sio_driver_device_id(&self) -> i32 {
         match &self.sio.driver {
             SioDriver::None | SioDriver::Gbp | SioDriver::Dolphin => 0,
+            // The battlechip driver has no deviceId hook (C: null → 0)
+            SioDriver::Battlechip(_) => 0,
             SioDriver::Lockstep(node) => node.device_id(),
         }
     }
@@ -288,6 +296,7 @@ impl Gba {
             SioDriver::None => 0,
             SioDriver::Gbp => 1,
             SioDriver::Dolphin => 1,
+            SioDriver::Battlechip(gate) => gate.connected_devices(),
             SioDriver::Lockstep(node) => node.connected_devices(),
         }
     }
@@ -334,8 +343,8 @@ impl Gba {
         let value = match &mut self.sio.driver {
             SioDriver::None | SioDriver::Gbp => value,
             // Dolphin's writeRCNT leaves the value untouched (dolphin.c has
-            // no writeRCNT hook).
-            SioDriver::Dolphin => value,
+            // no writeRCNT hook); the battlechip driver has none either.
+            SioDriver::Dolphin | SioDriver::Battlechip(_) => value,
             SioDriver::Lockstep(node) => node.write_rcnt(value),
         };
         if self.sio.mode == SioMode::Gpio {
@@ -361,6 +370,9 @@ impl Gba {
             }
             SioDriver::Dolphin => {
                 // Dolphin has no start() hook in the C.
+            }
+            SioDriver::Battlechip(_) => {
+                // The battlechip gate has no start() hook either.
             }
         }
         self.sio.driver = driver;
@@ -397,6 +409,15 @@ impl Gba {
                     id = node.device_id();
                     connected = node.connected_devices();
                     true // writeSIOCNT is always present on the lockstep driver
+                } else {
+                    false
+                }
+            }
+            SioDriver::Battlechip(gate) => {
+                if gate.handles_mode(self.sio.mode) {
+                    // No deviceId hook (C: null) → id stays 0.
+                    connected = gate.connected_devices();
+                    true // writeSIOCNT is always present on the battlechip driver
                 } else {
                     false
                 }
@@ -443,6 +464,9 @@ impl Gba {
                 }
                 SioDriver::Lockstep(node) => {
                     value = node.write_siocnt(value);
+                }
+                SioDriver::Battlechip(gate) => {
+                    value = gate.write_siocnt(value);
                 }
                 _ => {}
             }
@@ -537,29 +561,38 @@ impl Gba {
         match self.sio.mode {
             SioMode::Multi => {
                 let mut data = [0u16; 4];
-                let driver = std::mem::take(&mut self.sio.driver);
-                if let SioDriver::Lockstep(mut node) = driver {
-                    node.finish_multiplayer(self, timing, &mut data);
-                    self.sio.driver = SioDriver::Lockstep(node);
+                let mut driver = std::mem::take(&mut self.sio.driver);
+                match &mut driver {
+                    SioDriver::Lockstep(node) => {
+                        node.finish_multiplayer(self, timing, &mut data);
+                    }
+                    SioDriver::Battlechip(gate) => {
+                        gate.finish_multiplayer(self, &mut data);
+                    }
+                    _ => {}
                 }
+                // Drivers without a finishMultiplayer hook leave data
+                // zeroed, exactly like the C's null-check; reinstall either
+                // way.
+                self.sio.driver = driver;
                 self.sio_multiplayer_finish(data, cycles_late);
             }
             SioMode::Normal8 => {
                 let mut data = 0u8;
-                let driver = std::mem::take(&mut self.sio.driver);
-                if let SioDriver::Lockstep(mut node) = driver {
+                let mut driver = std::mem::take(&mut self.sio.driver);
+                if let SioDriver::Lockstep(node) = &mut driver {
                     data = node.finish_normal8(self, timing);
-                    self.sio.driver = SioDriver::Lockstep(node);
                 }
+                self.sio.driver = driver;
                 self.sio_normal8_finish(data, cycles_late);
             }
             SioMode::Normal32 => {
                 let mut data = 0u32;
-                let driver = std::mem::take(&mut self.sio.driver);
-                if let SioDriver::Lockstep(mut node) = driver {
+                let mut driver = std::mem::take(&mut self.sio.driver);
+                if let SioDriver::Lockstep(node) = &mut driver {
                     data = node.finish_normal32(self, timing);
-                    self.sio.driver = SioDriver::Lockstep(node);
                 }
+                self.sio.driver = driver;
                 self.sio_normal32_finish(data, cycles_late);
             }
             _ => {

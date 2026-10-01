@@ -91,4 +91,47 @@ impl RingI16 {
         }
         n
     }
+
+    // --- mAudioBuffer view (src/util/audio-buffer.c, channels == 2) ---
+    // audio_resampler.rs drives the ring through these.
+
+    /// mAudioBufferAvailable: whole stereo frames currently buffered.
+    pub fn available_frames(&self) -> usize {
+        self.size / 2
+    }
+
+    /// mAudioBufferCapacity: whole stereo frames the ring can hold.
+    pub fn capacity_frames(&self) -> usize {
+        self.data.len() / 2
+    }
+
+    /// mAudioBufferFull.
+    pub fn full_frames(&self) -> bool {
+        self.size == self.data.len()
+    }
+
+    /// mAudioBufferPeek: non-destructive read of one channel of the buffered
+    /// frame `offset` frames ahead of the read head; 0 when out of range
+    /// (C: mCircleBufferDump failure).
+    pub fn peek_frame(&self, channel: usize, offset: usize) -> i16 {
+        // Out-of-range (past buffered size or bogus channel) → 0, like the
+        // C's failed mCircleBufferDump.
+        let idx = offset * 2 + channel;
+        if idx >= self.size {
+            return 0;
+        }
+        let cap = self.data.len();
+        self.data[(self.read + idx) % cap]
+    }
+
+    /// mAudioBufferRead with a NULL destination: drop up to `frames` whole
+    /// frames, returning how many were actually dropped.
+    pub fn drop_frames(&mut self, frames: usize) -> usize {
+        let dropped = frames.min(self.size / 2);
+        let samples = dropped * 2;
+        let cap = self.data.len();
+        self.read = (self.read + samples) % cap;
+        self.size -= samples;
+        dropped
+    }
 }

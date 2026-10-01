@@ -1,10 +1,12 @@
 // Copyright (c) 2013-2021 Jeffrey Pfau (mGBA), MPL-2.0.
 // Ported from mgba/src/gba/cart/gpio.c.
 
+pub mod battlechip;
 pub mod ereader;
 pub mod matrix;
 pub mod unlicensed;
 
+pub use battlechip::{BattleChipGate, BattlechipFlavor};
 pub use ereader::EReader;
 pub use matrix::Matrix;
 pub use unlicensed::{UnlCart, UnlCartType};

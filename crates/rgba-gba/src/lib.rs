@@ -15,6 +15,7 @@ pub mod memory;
 pub mod overrides;
 pub mod savedata;
 pub mod serialize;
+pub mod sharkport;
 pub mod sio;
 pub mod timers;
 pub mod video;

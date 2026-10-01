@@ -138,6 +138,8 @@ pub struct Gba {
     pub has_bios: bool,
 
     pub keys_active: u16,
+    /// Core-level mirror of the frontend's gba.forceGbp setting.
+    pub force_gbp: bool,
     pub keys_last: u16,
     pub allow_opposing_directions: bool,
 
@@ -210,6 +212,7 @@ impl Gba {
             rom_crc32: 0,
             has_bios: false,
             keys_active: 0,
+            force_gbp: false,
             keys_last: 0,
             allow_opposing_directions: false,
             debugger: None,
@@ -700,7 +703,15 @@ impl Gba {
     fn apply_overrides(&mut self) {
         // GBAOverrideApplyDefaults (gba/overrides.c); config/ini overrides are
         // not ported, so this is the static table + Pokémon ROM-hack defaults.
+        // The C clears HW_GB_PLAYER_DETECTION inside OverridesApply unless
+        // the config's forceGbp is set (GBAStartedLoad); mirror that here.
+        if !self.force_gbp {
+            self.hw.devices &= !crate::gba::HW_GB_PLAYER_DETECTION;
+        }
         crate::overrides::override_apply_defaults(self);
+        if self.force_gbp {
+            self.hw.devices |= crate::gba::HW_GB_PLAYER_DETECTION;
+        }
     }
 }
 

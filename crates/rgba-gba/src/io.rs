@@ -654,8 +654,17 @@ impl Gba {
             GBA_REG_TM2CNT_LO => self.timer_update_register(2, 2),
             GBA_REG_TM3CNT_LO => self.timer_update_register(3, 2),
             GBA_REG_KEYINPUT => {
+                // keyCallback (GBP virtual controller, gbp.c _gbpRead)
+                let mut allow_opposing = self.allow_opposing_directions;
+                if self.sio.gbp.key_override {
+                    self.keys_active = crate::sio::gbp::gbp_read_keys(self);
+                    // GBP requires opposing directions
+                    if !allow_opposing {
+                        allow_opposing = true;
+                    }
+                }
                 let mut input = self.keys_active;
-                if !self.allow_opposing_directions {
+                if !allow_opposing {
                     let rl = input & 0x030;
                     let ud = input & 0x0C0;
                     input &= 0x30F;

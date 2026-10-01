@@ -61,6 +61,7 @@ pub const GBA_DEBUG: &str = "GBA Debug";
 pub const GBA_SAVE: &str = "GBA Savedata";
 pub const GBA_CHEAT: &str = "GBA Cheat";
 pub const GBA_ROM: &str = "GBA ROM";
+pub const GBA_BATTLECHIP: &str = "GBA BattleChip Gate";
 pub const ARM: &str = "ARM";
 pub const SM83: &str = "SM83";
 pub const CORE: &str = "Core";

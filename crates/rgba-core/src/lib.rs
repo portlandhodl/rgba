@@ -6,9 +6,13 @@
 //! This port is a derived work, also MPL-2.0.
 
 
+pub mod audio_resampler;
 pub mod cheats;
+pub mod convolve;
 pub mod core;
+pub mod interpolator;
 pub mod log;
+pub mod mem_search;
 pub mod patch;
 pub mod patch_fast;
 pub mod rewind;
