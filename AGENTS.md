@@ -63,7 +63,7 @@ libretro frontend uses it; the GB/GBA cores and the SDL frontend path do not.
 | `crates/rgba-gba/src/bios.rs` | `src/gba/bios.c`, `src/gba/hle-bios.*` |
 | `crates/rgba-gba/src/serialize.rs` | `src/gba/serialize.c` |
 | `crates/rgba-gba/src/overrides.rs` | `src/gba/overrides.c`, `include/mgba/internal/gba/overrides.h` (static table + Pokémon ROM-hack defaults; config/ini overrides not ported) |
-| `crates/rgba-gba/src/cheats.rs` | `src/gba/cheats.c`, `src/gba/cheats/{gameshark,parv3,codebreaker}.c` (GBACheatHook breakpoints not ported) |
+| `crates/rgba-gba/src/cheats.rs` | `src/gba/cheats.c`, `src/gba/cheats/{gameshark,parv3,codebreaker}.c` (GBACheatHook = BKPT patched via `patch16`, dispatched from `gba_breakpoint` component 1) |
 | `crates/rgba-debugger/src/debugger.rs` | `src/debugger/debugger.c` (`mDebugger`, `mDebuggerModule`, platform glue; platform vtable → `DebugConsole` trait + inherent `Gb`/`Gba` methods) |
 | `crates/rgba-debugger/src/access_logger.rs` | `src/debugger/access-logger.c`, `include/mgba/internal/debugger/access-logger.h` (`mDebuggerAccessLogger` module, mAL\1 region/flag tables; recording is driven by the consoles' memory-shim hooks into `AccessLoggerCore` held by `GbDebugger`/`GbaDebugger`, instead of C's per-region watchpoints) |
 | `crates/rgba-debugger/src/gdb.rs` | `src/debugger/gdb-stub.c` (GDB remote serial stub; TCP via `std::net`, nonblocking; test injection via `feed_input`/`take_output`) |
