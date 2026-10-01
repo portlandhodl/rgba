@@ -54,6 +54,7 @@ libretro frontend uses it; the GB/GBA cores and the SDL frontend path do not.
 | `crates/rgba-gba/src/timers.rs` | `src/gba/timer.c` |
 | `crates/rgba-gba/src/sio/mod.rs` | `src/gba/sio.c` (driver vtable → `SioDriver` enum; variants: `Gbp`, `Dolphin`, `Lockstep`, `Battlechip` — the latter's state machine lives in `cart/battlechip.rs`) |
 | `crates/rgba-gba/src/sio/lockstep.rs` | `src/gba/sio/lockstep.c`, `include/mgba/internal/gba/sio/lockstep.h`, `include/mgba/core/lockstep.h` (single-threaded cooperative model: `Rc<RefCell<GbaSioLockstep>>` shared between linked `Gba`s, node event = `EventId::SioLockstep`; driver savestate via `Gba::sio_save_extra_state`/`sio_load_extra_state`, mirroring core.c's extdata slot) |
+| `crates/rgba-gba/src/video_log.rs` | `src/gba/extra/proxy.c` record side + `_GBACoreStartVideoLog`/`_GBACoreEndVideoLog` (gba/core.c); hooks inline in `video/renderers.rs`; `-v`/`--video-log` in the frontend |
 | `crates/rgba-gba/src/savedata.rs` | `src/gba/savedata.c` |
 | `crates/rgba-gba/src/sharkport.rs` | `src/gba/sharkport.c`, `include/mgba/internal/gba/sharkport.h` (SharkPort `.sps`/`.xps` + GameShark `.gsv` savedata container import/export; VFile → byte slices; savedata container only, no savestate is produced) |
 | `crates/rgba-gba/src/cart/mod.rs` | `src/gba/cart/gpio.c` (GPIO: RTC, rumble, light, gyro/tilt) |
