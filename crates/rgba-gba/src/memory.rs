@@ -199,10 +199,143 @@ fn ror32(v: u32, r: u32) -> u32 {
 }
 
 impl Gba {
-    /// GBASetActiveRegion (minus the idle-loop detector, which we compile out:
-    /// behavior is identical, idle games simply burn the cycles).
+    /// _analyzeForIdleLoop (only called in Thumb mode; see the C).
+    fn analyze_for_idle_loop(&mut self, address: u32) {
+        use crate::arm::decoder::*;
+        self.tainted_registers = [false; 16];
+        self.cached_registers = [0; 16];
+        if self.cpu.execution_mode != crate::arm::ExecutionMode::Thumb {
+            self.idle_detection_step = -1;
+            return;
+        }
+        let mut next_address = address;
+        loop {
+            let opcode = {
+                // LOAD_16 from the active region, like the C
+                let mut cc = 0i32;
+                self.load16(next_address, &mut cc) as u16
+            };
+            let info = arm_decode_thumb(opcode);
+            match info.branch_type {
+                ARM_BRANCH_NONE => {
+                    if info.operand_format & ARM_OPERAND_MEMORY_2 != 0 {
+                        if info.mnemonic == ARMMnemonic::Str
+                            || self.tainted_registers[info.memory.base_reg as usize]
+                        {
+                            self.idle_detection_step = -1;
+                            return;
+                        }
+                        let mut load_address =
+                            self.cached_registers[info.memory.base_reg as usize] as u32;
+                        let mut offset: u32 = 0;
+                        if info.memory.format & ARM_MEMORY_IMMEDIATE_OFFSET != 0 {
+                            offset = info.memory.offset.immediate as u32;
+                        } else if info.memory.format & ARM_MEMORY_REGISTER_OFFSET != 0 {
+                            let reg = info.memory.offset.reg as usize;
+                            if reg < 16 && self.cached_registers[reg] != 0 {
+                                self.idle_detection_step = -1;
+                                return;
+                            }
+                            offset = self.cached_registers[reg] as u32;
+                        }
+                        if info.memory.format & ARM_MEMORY_OFFSET_SUBTRACT != 0 {
+                            load_address = load_address.wrapping_sub(offset);
+                        } else {
+                            load_address = load_address.wrapping_add(offset);
+                        }
+                        if (load_address >> BASE_OFFSET) == GBA_REGION_IO
+                            && !Gba::io_is_read_constant(load_address)
+                        {
+                            self.idle_detection_step = -1;
+                            return;
+                        }
+                        if (load_address >> BASE_OFFSET) < GBA_REGION_ROM0
+                            || (load_address >> BASE_OFFSET) > GBA_REGION_ROM2_EX
+                        {
+                            self.tainted_registers[info.op1.reg as usize] = true;
+                        } else {
+                            let mut cc = 0i32;
+                            let op = info.op1.reg as usize;
+                            match info.memory.width {
+                                1 => self.cached_registers[op] = self.load8(load_address, &mut cc) as i32,
+                                2 => self.cached_registers[op] = self.load16(load_address, &mut cc) as i32,
+                                4 => self.cached_registers[op] = self.load32(load_address, &mut cc) as i32,
+                                _ => {}
+                            }
+                        }
+                    } else if info.operand_format & ARM_OPERAND_AFFECTED_1 != 0 {
+                        self.tainted_registers[info.op1.reg as usize] = true;
+                    }
+                    next_address += WORD_SIZE_THUMB as u32;
+                }
+                bt if bt & ARM_BRANCH != 0 => {
+                    // C: `if (info.op1.immediate + nextAddress +
+                    //    WORD_SIZE_THUMB*2 == address)` — any branch kind.
+                    if info.branch_type == ARM_BRANCH
+                        && info.op1.immediate.wrapping_add(
+                            next_address.wrapping_add(WORD_SIZE_THUMB as u32 * 2) as i32,
+                        ) == address as i32
+                    {
+                        self.idle_loop = address;
+                        self.idle_optimization = IDLE_LOOP_REMOVE;
+                    }
+                    self.idle_detection_step = -1;
+                    return;
+                }
+                _ => {
+                    self.idle_detection_step = -1;
+                    return;
+                }
+            }
+        }
+    }
+
+    /// GBASetActiveRegion
     pub fn set_active_region(&mut self, address: u32) {
         let new_region = address >> BASE_OFFSET;
+
+        // Idle-loop detection block (C's GBASetActiveRegion, gated on
+        // idleOptimization >= REMOVE and the active region not being BIOS).
+        if self.idle_optimization >= IDLE_LOOP_REMOVE
+            && self.memory.active_region != GBA_REGION_BIOS as i32
+        {
+            if address == self.idle_loop {
+                if self.halt_pending {
+                    self.halt_pending = false;
+                    self.halt();
+                } else {
+                    self.halt_pending = true;
+                }
+            } else if self.idle_optimization >= IDLE_LOOP_DETECT
+                && new_region as i32 == self.memory.active_region
+            {
+                if address == self.last_jump {
+                    match self.idle_detection_step {
+                        0 => {
+                            self.cached_registers = self.cpu.gprs;
+                            self.idle_detection_step = 1;
+                        }
+                        1 => {
+                            if self.cached_registers != self.cpu.gprs {
+                                self.idle_detection_step = -1;
+                                self.idle_detection_failures += 1;
+                                if self.idle_detection_failures > 10000 {
+                                    self.idle_optimization = IDLE_LOOP_IGNORE;
+                                }
+                            } else {
+                                self.analyze_for_idle_loop(address);
+                            }
+                        }
+                        _ => {}
+                    }
+                } else {
+                    self.idle_detection_step = 0;
+                }
+            }
+        }
+        self.last_jump = address;
+
+        // memory->lastPrefetchedPc = 0 in C; our prefetch is decoupled.
 
         if new_region as i32 == self.memory.active_region {
             if self.cpu.cpsr.t() {
