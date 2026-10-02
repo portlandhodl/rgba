@@ -2,7 +2,7 @@
 // Ported from mgba/include/mgba/internal/gba/gba.h and mgba/src/gba/gba.c.
 
 use rgba_core::cheats::CheatDevice;
-use rgba_core::timing::Timing;
+use rgba_core::timing::{PopDue, Timing};
 use rgba_core::{mlog, Level};
 
 use crate::arm::{ArmCore, PrivilegeMode, ARM_SP};
@@ -276,11 +276,9 @@ impl Gba {
     pub fn current_time(&self) -> i32 {
         self.timing.master_cycles as i32 + self.cpu.cycles
     }
-    pub fn with_timing<R>(&mut self, f: impl FnOnce(&mut Self, &mut Timing) -> R) -> R {
-        let mut timing = std::mem::take(&mut self.timing);
-        timing.set_relative_cycles(self.cpu.cycles);
-        let r = f(self, &mut timing);
-        self.timing = timing;
+    pub fn with_timing<R>(&mut self, f: impl FnOnce(&mut Self) -> R) -> R {
+        self.timing.set_relative_cycles(self.cpu.cycles);
+        let r = f(self);
         self.cpu.next_event = self.timing.next_event_cycles_owned();
         r
     }
@@ -329,12 +327,28 @@ impl Gba {
         {
             if !self.is_scheduled(EventId::IrqEvent) {
                 self.schedule(EventId::IrqEvent, 7);
+                if std::env::var("RGBA_IRQTRACE").is_ok() {
+                    eprintln!("[irq] sched +7 t={} pc={:08X} IE={:04X} IF={:04X}",
+                        self.current_time(), self.cpu.gprs[15],
+                        self.memory.io[(GBA_REG_IE >> 1) as usize],
+                        self.memory.io[(GBA_REG_IF >> 1) as usize]);
+                }
+            } else if std::env::var("RGBA_IRQTRACE").is_ok() {
+                eprintln!("[irq] already-scheduled t={} pc={:08X}", self.current_time(), self.cpu.gprs[15]);
             }
         }
     }
 
     /// _triggerIRQ
     pub fn trigger_irq_event(&mut self) {
+        if std::env::var("RGBA_IRQTRACE").is_ok() {
+            eprintln!("[irq] TRIGGER t={} IE={:04X} IF={:04X} IME={:04X} cpsrI={}",
+                self.current_time(),
+                self.memory.io[(GBA_REG_IE >> 1) as usize],
+                self.memory.io[(GBA_REG_IF >> 1) as usize],
+                self.memory.io[(GBA_REG_IME >> 1) as usize],
+                self.cpu.cpsr.i());
+        }
         self.cpu.halted = 0;
         if self.memory.io[(GBA_REG_IE >> 1) as usize] & self.memory.io[(GBA_REG_IF >> 1) as usize]
             == 0
@@ -348,34 +362,42 @@ impl Gba {
 
     /// GBATestKeypadIRQ
     pub fn test_keypad_irq(&mut self) {
-        let keycnt = self.memory.io[(GBA_REG_KEYCNT >> 1) as usize];
-        let keypad_active = (self.keys_active & !(self.keys_last)) as u32;
-        self.keys_last = self.keys_active;
+        let keys_last = self.keys_last;
+        let keys_active = self.keys_active;
+
+        let mut keycnt = self.memory.io[(GBA_REG_KEYCNT >> 1) as usize];
         if keycnt & 0x4000 == 0 {
             return;
         }
-        let and = (keycnt & 0x8000) != 0;
-        let mask = (keycnt & 0x3FF) as u32;
-        let keys = !self.keys_active as u32 & 0x3FF;
-        let cond = if and {
-            keys & mask == mask
+        self.keys_last = keys_active;
+        let is_and = keycnt & 0x8000 != 0;
+
+        keycnt &= 0x3FF;
+        if is_and && keycnt == (keys_active & keycnt) {
+            if keys_last == keys_active {
+                return;
+            }
+            self.raise_irq(GBA_IRQ_KEYPAD);
+        } else if !is_and && (keys_active & keycnt) != 0 {
+            self.raise_irq(GBA_IRQ_KEYPAD);
         } else {
-            keys & mask != 0
-        };
-        if cond || keypad_active & mask != 0 {
-            // raise keypad IRQ
-            self.memory.io[(GBA_REG_IF >> 1) as usize] |= 1 << GBA_IRQ_KEYPAD;
-            self.test_irq(0);
+            self.keys_last = 0x400;
         }
     }
 
     /// GBAProcessEvents (gba.c). `cycles are tracked relative to next_event`.
+    ///
+    /// Unlike the C (where `gba->timing` is shared via pointers), the console
+    /// here dispatches events itself (`tick_dispatch`) so that event handlers
+    /// always run with `self.timing` being the live queue — a handler that
+    /// schedules/reschedules/reads the clock through `self` (e.g. DMA, IRQ,
+    /// timer, video) touches the same queue the tick loop is draining, exactly
+    /// like `mTimingTick` callbacks in C.
     pub fn process_events(&mut self) {
         // Mirror the C loop exactly: recapture `cycles` fresh every tick
         // while handlers may push cycles back onto cpu.cycles.
-        let mut timing = std::mem::take(&mut self.timing);
         let mut next_event = self.cpu.next_event;
-                while self.cpu.cycles >= next_event {
+        while self.cpu.cycles >= next_event {
             self.cpu.next_event = i32::MAX;
             next_event = 0;
             loop {
@@ -386,9 +408,7 @@ impl Gba {
                 } else {
                     cycles
                 };
-                next_event = timing.tick(to_tick, self, &mut |gba: &mut Gba, timing, id, late| {
-                    gba.process_event(timing, id, late);
-                });
+                next_event = self.tick_dispatch(to_tick);
                 if !(self.cpu_blocked && !self.early_exit) {
                     break;
                 }
@@ -406,27 +426,52 @@ impl Gba {
                 break;
             }
         }
-        self.timing = timing;
         self.early_exit = false;
         if self.cpu_blocked {
             self.cpu.cycles = self.cpu.next_event;
         }
     }
 
-    fn process_event(&mut self, timing: &mut Timing, id: u32, cycles_late: i32) {
+    /// mTimingTick with in-place dispatch: the C's callbacks receive the
+    /// shared `&gba->timing`; here `process_event` runs as a normal method so
+    /// `self.timing` stays the live queue. The C shared-pointer state during
+    /// callbacks is reproduced per dispatch: `*relativeCycles`
+    /// (`cpu.cycles`) is 0 and `*nextEvent` is min-maintained by schedules.
+    fn tick_dispatch(&mut self, cycles: i32) -> i32 {
+        self.timing.advance_clock(cycles);
+        loop {
+            match self.timing.pop_due_event() {
+                PopDue::Event(id, late) => {
+                    self.timing.set_relative_cycles(self.cpu.cycles);
+                    self.timing.set_next_event(self.cpu.next_event);
+                    self.process_event(id, late);
+                    self.cpu.next_event = self.timing.next_event_cycles_owned();
+                }
+                PopDue::Pending(next_when) => return next_when,
+                PopDue::Empty => break,
+            }
+        }
+        if self.timing.adopt_reroot() {
+            let ne = self.timing.next_event_cycles();
+            self.timing.set_next_event(ne);
+        }
+        self.timing.next_event_cycles_owned()
+    }
+
+    fn process_event(&mut self, id: u32, cycles_late: i32) {
         match id {
-            x if x == EventId::Video as u32 => self.video_event(timing, cycles_late as u32),
+            x if x == EventId::Video as u32 => self.video_event(cycles_late as u32),
             x if x == EventId::Dma as u32 => {
                 let dma = self.dma_event_id as usize;
-                self.dma_event(dma, timing, cycles_late);
+                self.dma_event(dma, cycles_late);
             }
-            x if x == EventId::AudioSample as u32 => self.audio_sample_event(timing, cycles_late),
-            x if x == EventId::Timer0 as u32 => self.timer_fired(0, timing, cycles_late as u32),
-            x if x == EventId::Timer1 as u32 => self.timer_fired(1, timing, cycles_late as u32),
-            x if x == EventId::Timer2 as u32 => self.timer_fired(2, timing, cycles_late as u32),
-            x if x == EventId::Timer3 as u32 => self.timer_fired(3, timing, cycles_late as u32),
+            x if x == EventId::AudioSample as u32 => self.audio_sample_event(cycles_late),
+            x if x == EventId::Timer0 as u32 => self.timer_fired(0, cycles_late as u32),
+            x if x == EventId::Timer1 as u32 => self.timer_fired(1, cycles_late as u32),
+            x if x == EventId::Timer2 as u32 => self.timer_fired(2, cycles_late as u32),
+            x if x == EventId::Timer3 as u32 => self.timer_fired(3, cycles_late as u32),
             x if x == EventId::UnlCartSettle as u32 => self.multicart_settle(cycles_late as u32),
-            x if x == EventId::Sio as u32 => self.sio_complete_event(timing, cycles_late as u32),
+            x if x == EventId::Sio as u32 => self.sio_complete_event(cycles_late as u32),
             x if x == EventId::SioDolphin as u32 => {
                 // GBASIODolphinProcessEvents
                 if let Some(mut dol) = self.sio.dolphin.take() {
@@ -435,7 +480,7 @@ impl Gba {
                 }
             }
             x if x == EventId::SioLockstep as u32 => {
-                self.sio_lockstep_event(timing, cycles_late as u32)
+                self.sio_lockstep_event(cycles_late as u32)
             }
             x if x == EventId::IrqEvent as u32 => self.trigger_irq_event(),
             _ => unreachable!(),
@@ -447,7 +492,14 @@ impl Gba {
     pub fn irq_reset(&mut self) {
         self.gba_reset();
     }
-    pub fn irq_read_cpsr(&mut self) {}
+    /// GBATestIRQNoDelay (irqh.readCPSR): after the core re-applies CPSR
+    /// (e.g. the IRQ epilogue restoring user mode), re-arm the IRQ event if
+    /// an IE&IF condition is still pending. Without this, an IRQ that stays
+    /// pending while another is handled (level-triggered on hardware) would
+    /// never be delivered.
+    pub fn irq_read_cpsr(&mut self) {
+        self.test_irq(0);
+    }
     /// irqh.swi16 → GBASwi16 (gba/bios.c)
     pub fn swi16(&mut self, immediate: i32) {
         crate::bios::bios_syscall_swi(self, immediate);
@@ -552,8 +604,21 @@ impl Gba {
         0
     }
 
+    /// GBAYankROM: pull the cartridge out while running.
+    pub fn yank_rom(&mut self) {
+        self.yanked_rom_size = self.memory.rom_size;
+        self.memory.rom_size = 0;
+        self.memory.rom_mask = 0;
+        self.raise_irq(GBA_IRQ_GAMEPAK);
+    }
+
     /// GBAReset — the irqh.reset path.
     pub fn gba_reset(&mut self) {
+        if self.yanked_rom_size != 0 {
+            self.memory.rom_size = self.yanked_rom_size;
+            self.memory.rom_mask = (self.memory.rom_size as u32).next_power_of_two().wrapping_sub(1);
+            self.yanked_rom_size = 0;
+        }
         self.timing.clear();
         self.memory_reset();
         self.io_init();
@@ -787,12 +852,11 @@ impl Core for Gba {
     }
     fn set_keys(&mut self, keys: u32) {
         self.keys = keys;
-        let keys16 = 0x3FFu32.wrapping_sub(keys as u16 as u32 & 0x3FF);
-        self.keys_active = keys16 as u16;
+        self.keys_active = keys as u16;
         self.test_keypad_irq();
     }
     fn keys(&self) -> u32 {
-        !self.keys_active as u32 & 0x3FF
+        self.keys_active as u32
     }
     fn video_buffer(&self) -> &[u32] {
         &self.video.sw.output
@@ -803,8 +867,10 @@ impl Core for Gba {
     fn audio_buffer(&mut self) -> &mut RingI16 {
         &mut self.audio.buffer
     }
+    /// _GBACoreAudioSampleRate: depends on SOUNDBIAS's resolution
+    /// (32768 Hz at resolution 0, 65536 Hz at 1, ...).
     fn audio_sample_rate(&self) -> i32 {
-        32768
+        (GBA_ARM7TDMI_FREQUENCY / self.audio.sample_interval.max(1) as u32) as i32
     }
     fn set_audio_buffer_size(&mut self, _samples: usize) {}
     fn debugger_attach(&mut self) -> bool {

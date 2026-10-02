@@ -261,7 +261,8 @@ impl ArmCore {
 
     #[inline]
     pub fn test_condition(&self, condition: u32) -> bool {
-        let flags = (self.cpsr.packed >> 24) as u32 & 0xF;
+        // cpu->cpsr.flags >> 4: NZCV in bits 31..28.
+        let flags = (self.cpsr.packed as u32) >> 28;
         CONDITION_LUT[(condition & 0xF) as usize] & (1 << flags) != 0
     }
 }

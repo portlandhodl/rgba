@@ -1,7 +1,6 @@
 // Copyright (c) 2013-2015 Jeffrey Pfau (mGBA), MPL-2.0.
 // Ported from mgba/src/gba/dma.c and include/mgba/internal/gba/dma.h.
 
-use rgba_core::timing::Timing;
 use rgba_core::{mlog, Level};
 
 use crate::gba::{EventId, Gba};
@@ -232,7 +231,7 @@ impl Gba {
     }
 
     /// The actual DMA granularity event
-    pub fn dma_event(&mut self, _dma: usize, timing: &mut Timing, _cycles_late: i32) {
+    pub fn dma_event(&mut self, _dma: usize, _cycles_late: i32) {
         let active = self.active_dma;
         if active < 0 {
             return;
@@ -270,7 +269,6 @@ impl Gba {
             }
             self.dma_update();
         }
-        let _ = timing;
     }
 
     /// GBADMAUpdate

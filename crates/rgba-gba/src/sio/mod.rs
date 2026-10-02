@@ -12,7 +12,6 @@ pub mod dolphin;
 pub mod gbp;
 pub mod lockstep;
 
-use rgba_core::timing::Timing;
 use rgba_core::{mlog, Level};
 
 use crate::cart::battlechip::BattleChipGate;
@@ -557,14 +556,14 @@ impl Gba {
     }
 
     /// _sioFinish
-    pub fn sio_complete_event(&mut self, timing: &mut Timing, cycles_late: u32) {
+    pub fn sio_complete_event(&mut self, cycles_late: u32) {
         match self.sio.mode {
             SioMode::Multi => {
                 let mut data = [0u16; 4];
                 let mut driver = std::mem::take(&mut self.sio.driver);
                 match &mut driver {
                     SioDriver::Lockstep(node) => {
-                        node.finish_multiplayer(self, timing, &mut data);
+                        node.finish_multiplayer(self, &mut data);
                     }
                     SioDriver::Battlechip(gate) => {
                         gate.finish_multiplayer(self, &mut data);
@@ -581,7 +580,7 @@ impl Gba {
                 let mut data = 0u8;
                 let mut driver = std::mem::take(&mut self.sio.driver);
                 if let SioDriver::Lockstep(node) = &mut driver {
-                    data = node.finish_normal8(self, timing);
+                    data = node.finish_normal8(self);
                 }
                 self.sio.driver = driver;
                 self.sio_normal8_finish(data, cycles_late);
@@ -590,7 +589,7 @@ impl Gba {
                 let mut data = 0u32;
                 let mut driver = std::mem::take(&mut self.sio.driver);
                 if let SioDriver::Lockstep(node) = &mut driver {
-                    data = node.finish_normal32(self, timing);
+                    data = node.finish_normal32(self);
                 }
                 self.sio.driver = driver;
                 self.sio_normal32_finish(data, cycles_late);

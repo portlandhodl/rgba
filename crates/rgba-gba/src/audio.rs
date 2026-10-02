@@ -55,7 +55,6 @@
 // 2 << resolution samples per firing spaced sample_interval apart.
 
 use rgba_core::ring::RingI16;
-use rgba_core::timing::Timing;
 use rgba_core::{mlog, Level};
 
 use crate::gba::{EventId, Gba, GBA_ARM7TDMI_FREQUENCY};
@@ -1948,8 +1947,8 @@ impl Gba {
     /// The folded frame event (_updateFrame, gb/audio.c, priority 0x10)
     /// runs first every 32nd firing, exactly as the C's earlier-higher-
     /// priority event would (see the header comment).
-    pub fn audio_sample_event(&mut self, timing: &mut Timing, cycles_late: i32) {
-        let now = timing.current_time();
+    pub fn audio_sample_event(&mut self, cycles_late: i32) {
+        let now = self.current_time();
         if self.audio.frame_phase == 0 {
             // _updateFrame body: sample up to now, then clock the sequencer.
             self.audio_sample(now);
@@ -1970,9 +1969,8 @@ impl Gba {
             let sample = self.audio.current_samples[i];
             self.audio.buffer.write_stereo(sample.left, sample.right);
         }
-        timing.schedule(
-            EventId::AudioSample.into(),
-            EventId::AudioSample.priority(),
+        self.schedule(
+            EventId::AudioSample,
             SAMPLE_INTERVAL.wrapping_sub(cycles_late),
         );
     }

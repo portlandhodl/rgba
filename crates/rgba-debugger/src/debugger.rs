@@ -570,11 +570,16 @@ impl Debugger {
     }
 
     /// mDebuggerRunFrame
+    /// mDebuggerRunFrame. Unlike the C, this also returns while the debugger
+    /// is paused: mGBA's frontends run the debugger on its own thread and
+    /// block in readline, but rgba's GUI consoles are non-blocking and must
+    /// get the UI thread back to collect input. Blocking backends (the stdio
+    /// CLI) never return from their prompt, so they behave as before.
     pub fn run_frame(&mut self, console: &mut dyn DebugConsole) {
         let frame = console.dbg_frame_counter();
         loop {
             self.run(console);
-            if console.dbg_frame_counter() != frame {
+            if console.dbg_frame_counter() != frame || self.state == DebuggerState::Paused {
                 break;
             }
         }

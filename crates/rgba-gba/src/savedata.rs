@@ -21,8 +21,8 @@ pub const FLASH_BASE_LO: u16 = 0x0;
 pub const FLASH_BASE_HI: u16 = 0x5555;
 pub const FLASH_BASE_2: u16 = 0x2AAA;
 
-pub const FLASH_PANASONIC_MN63F805MNP: u16 = 0x09C2;
-pub const FLASH_SANYO_LE26FV10N1TS: u16 = 0xD4BF;
+pub const FLASH_MFG_PANASONIC: u16 = 0x1B32;
+pub const FLASH_MFG_SANYO: u16 = 0x1362;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum SavedataType {
@@ -260,11 +260,11 @@ impl Gba {
         if self.savedata.command == FLASH_COMMAND_ID {
             if self.savedata.savedata_type == SavedataType::Flash512 {
                 if address < 2 {
-                    return (FLASH_PANASONIC_MN63F805MNP >> (address * 8)) as u8;
+                    return (FLASH_MFG_PANASONIC >> (address * 8)) as u8;
                 }
             } else if self.savedata.savedata_type == SavedataType::Flash1M {
                 if address < 2 {
-                    return (FLASH_SANYO_LE26FV10N1TS >> (address * 8)) as u8;
+                    return (FLASH_MFG_SANYO >> (address * 8)) as u8;
                 }
             }
         }

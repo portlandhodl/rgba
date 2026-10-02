@@ -389,7 +389,11 @@ impl Gba {
                 return;
             }
             GBA_REG_IF => {
-                let v = self.memory.io[(GBA_REG_IF >> 1) as usize] & !value;
+                let old = self.memory.io[(GBA_REG_IF >> 1) as usize];
+                let v = old & !value;
+                if std::env::var("RGBA_IRQTRACE").is_ok() {
+                    eprintln!("[IF] pc={:08X} write {:04X}: {:04X} -> {:04X}", self.cpu.gprs[15], value, old, v);
+                }
                 self.memory.io[(GBA_REG_IF >> 1) as usize] = v;
                 self.test_irq(1);
                 return;

@@ -32,11 +32,34 @@ pub fn max_level() -> Level {
     }
 }
 
+/// A frontend log sink (mLogger.log): receives every message that passes the
+/// level filter. When set, it replaces the default stderr output.
+pub type LogSink = Box<dyn Fn(Level, &str, &str) + Send + Sync>;
+
+static SINK: std::sync::RwLock<Option<LogSink>> = std::sync::RwLock::new(None);
+
+pub fn set_sink(sink: Option<LogSink>) {
+    if let Ok(mut s) = SINK.write() {
+        *s = sink;
+    }
+}
+
+/// Deliver one message (used by `mlog!`).
+pub fn emit(level: Level, category: &str, message: std::fmt::Arguments) {
+    if let Ok(s) = SINK.read() {
+        if let Some(sink) = s.as_ref() {
+            sink(level, category, &message.to_string());
+            return;
+        }
+    }
+    eprintln!("[{}] {}", category, message);
+}
+
 #[macro_export]
 macro_rules! mlog {
     ($level:expr, $cat:expr, $($arg:tt)*) => {
         if $level <= $crate::log::max_level() {
-            eprintln!("[{}] {}", $cat, format_args!($($arg)*));
+            $crate::log::emit($level, $cat, format_args!($($arg)*));
         }
     };
 }

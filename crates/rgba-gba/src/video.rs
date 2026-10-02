@@ -4,7 +4,6 @@
 
 pub mod renderers;
 
-use rgba_core::timing::Timing;
 use rgba_core::{mlog, Level};
 
 use crate::gba::{EventId, Gba};
@@ -230,21 +229,17 @@ impl Gba {
     }
 
     /// The video frame event (video.c's `event` callback).
-    pub fn video_event(&mut self, timing: &mut Timing, cycles_late: u32) {
+    pub fn video_event(&mut self, cycles_late: u32) {
         match self.video.event_kind {
-            VideoEventKind::StartHdraw => self.video_start_hdraw(timing, cycles_late),
-            VideoEventKind::StartHblank => self.video_start_hblank(timing, cycles_late),
+            VideoEventKind::StartHdraw => self.video_start_hdraw(cycles_late),
+            VideoEventKind::StartHblank => self.video_start_hblank(cycles_late),
         }
     }
 
-    fn video_start_hdraw(&mut self, timing: &mut Timing, cycles_late: u32) {
+    fn video_start_hdraw(&mut self, cycles_late: u32) {
         self.video.event_kind = VideoEventKind::StartHblank;
         let when = VIDEO_HDRAW_LENGTH - cycles_late as i32;
-        timing.schedule(
-            EventId::Video.into(),
-            EventId::Video.priority(),
-            when,
-        );
+        self.schedule(EventId::Video, when);
 
         self.video.vcount += 1;
         if self.video.vcount == VIDEO_VERTICAL_TOTAL_PIXELS {
@@ -299,14 +294,10 @@ impl Gba {
         }
     }
 
-    fn video_start_hblank(&mut self, timing: &mut Timing, cycles_late: u32) {
+    fn video_start_hblank(&mut self, cycles_late: u32) {
         self.video.event_kind = VideoEventKind::StartHdraw;
         let when = VIDEO_HBLANK_LENGTH - cycles_late as i32;
-        timing.schedule(
-            EventId::Video.into(),
-            EventId::Video.priority(),
-            when,
-        );
+        self.schedule(EventId::Video, when);
 
         // Begin Hblank
         let mut dispstat = self.memory.io[(GBA_REG_DISPSTAT >> 1) as usize];

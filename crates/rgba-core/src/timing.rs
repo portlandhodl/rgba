@@ -33,6 +33,17 @@ pub struct Timing {
     next_event: i32,
 }
 
+/// Result of popping the head of the event queue in `Timing::pop_due_event`.
+pub enum PopDue {
+    /// The head event was due; it has been removed. (id, cycles_late)
+    Event(u32, i32),
+    /// Head event not yet due: cycles until it fires (mTimingTick's early
+    /// `return nextWhen`).
+    Pending(i32),
+    /// Queue empty.
+    Empty,
+}
+
 fn insert_sorted(list: &mut Vec<EventSlot>, ev: EventSlot, master_cycles: u32) {
     // Match mTimingSchedule's insertion: before the first event that fires
     // strictly later, or that fires at the same time with higher priority.
@@ -134,6 +145,42 @@ impl Timing {
     pub fn is_scheduled(&self, id: u32) -> bool {
         let list = if !self.root.is_empty() { &self.root } else { &self.reroot };
         list.iter().any(|e| e.id == id)
+    }
+
+    /// The clock-advance half of mTimingTick (`*masterCycles += cycles`).
+    /// Pair with `pop_due_event` when the console dispatches events itself
+    /// (so event handlers run with the console's timing queue in place,
+    /// exactly like the C where `&gba->timing` is shared everywhere).
+    pub fn advance_clock(&mut self, cycles: i32) {
+        self.master_cycles = self.master_cycles.wrapping_add(cycles as u32);
+        self.global_cycles += cycles as u64;
+    }
+
+    /// The dispatch step of mTimingTick's loop: if the head event is due,
+    /// remove it and return `PopDue::Event(id, cycles_late)`; if not due,
+    /// `PopDue::Pending(cycles_until)`; if the queue is empty, `PopDue::Empty`.
+    pub fn pop_due_event(&mut self) -> PopDue {
+        let Some(next) = self.root.first().copied() else {
+            return PopDue::Empty;
+        };
+        let next_when = next.when.wrapping_sub(self.master_cycles) as i32;
+        if next_when > 0 {
+            return PopDue::Pending(next_when);
+        }
+        self.root.remove(0);
+        PopDue::Event(next.id, -next_when)
+    }
+
+    /// mTimingTick's tail: after the root queue empties, adopt the rerooted
+    /// list (`mTimingInterrupt` moves the pending queue aside so a console
+    /// can drain it after the frame). Returns true when an adoption happened
+    /// (the C then does `*nextEvent = mTimingNextEvent(timing)`).
+    pub fn adopt_reroot(&mut self) -> bool {
+        if self.reroot.is_empty() {
+            return false;
+        }
+        std::mem::swap(&mut self.root, &mut self.reroot);
+        true
     }
 
     /// Run the clock forward `cycles` master cycles, dispatching due events to

@@ -34,6 +34,17 @@ pub const RTC_FORCE_IRQ: u32 = 3;
 pub const RTC_CONTROL: u32 = 4;
 pub const RTC_TIME: u32 = 6;
 
+/// mRotationSource (include/mgba/core/interface.h), as values the frontend
+/// supplies instead of callbacks: readTiltX/readTiltY/readGyroZ results in
+/// the C's int32 units. Zero means "level / not rotating" (tilt reads back
+/// 0x3A0, gyro 0x700).
+#[derive(Clone, Copy, Debug, Default)]
+pub struct RotationSource {
+    pub tilt_x: i32,
+    pub tilt_y: i32,
+    pub gyro_z: i32,
+}
+
 pub struct CartridgeHardware {
     pub devices: u32,
     pub read_write: u16,
@@ -63,6 +74,10 @@ pub struct CartridgeHardware {
     pub tilt_x: u16,
     pub tilt_y: u16,
     pub tilt_state: i32,
+
+    /// `gba->rotationSource`: frontend input, not cart state (survives
+    /// hw_clear and is not serialized).
+    pub rotation: RotationSource,
 }
 
 impl CartridgeHardware {
@@ -92,6 +107,7 @@ impl CartridgeHardware {
             tilt_x: 0xFFF,
             tilt_y: 0xFFF,
             tilt_state: 0,
+            rotation: RotationSource::default(),
         }
     }
 }
@@ -419,7 +435,23 @@ impl Gba {
     }
 
     // --- Gyro ---
+    /// _gyroReadPins
     fn gyro_read_pins(&mut self) {
+        // Write bit on falling edge
+        let mut do_output = self.hw.gyro_edge && self.hw.pin_state & 2 == 0;
+        if self.hw.pin_state & 1 != 0 {
+            let sample = self.hw.rotation.gyro_z;
+            // Normalize to ~12 bits, focused on 0x700
+            self.hw.gyro_sample = ((sample >> 21) + 0x700) as u16;
+            do_output = true;
+        }
+
+        if do_output {
+            let bit = (self.hw.gyro_sample >> 15) as u8;
+            self.hw.gyro_sample <<= 1;
+            self.gpio_output_pins(bit << 2);
+        }
+
         self.hw.gyro_edge = self.hw.pin_state & 2 != 0;
     }
 
@@ -460,8 +492,10 @@ impl Gba {
             0x8100 => {
                 if value == 0xAA && self.hw.tilt_state == 1 {
                     self.hw.tilt_state = 0;
-                    self.hw.tilt_x = 0x3A0;
-                    self.hw.tilt_y = 0x3A0;
+                    let r = self.hw.rotation;
+                    // Normalize to ~12 bits, focused on 0x3A0
+                    self.hw.tilt_x = (0x3A0 - (r.tilt_x >> 22)) as u16;
+                    self.hw.tilt_y = (0x3A0 - (r.tilt_y >> 22)) as u16;
                 } else {
                     mlog!(Level::GameError, rgba_core::log::GBA_HW, "Tilt sensor wrote wrong byte to {:04x}: {:02x}", address, value);
                 }

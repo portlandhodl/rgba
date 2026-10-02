@@ -213,19 +213,23 @@ pub fn mosaic_obj_v(m: u16) -> i32 {
     ((m >> 12) & 0xF) as i32
 }
 
-/// OBJ sizes (GBAVideoObjSizes: [shape*4+size][w,h])
-pub const OBJ_SIZES_TABLE: [[i32; 2]; 12] = [
+/// GBAVideoObjSizes (gba/video.c), indexed by `shape * 4 + size`.
+pub const OBJ_SIZES_TABLE: [[i32; 2]; 16] = [
     [8, 8],
-    [16, 8],
-    [8, 16],
-    [0, 0],
     [16, 16],
-    [32, 8],
-    [8, 32],
-    [0, 0],
     [32, 32],
+    [64, 64],
+    [16, 8],
+    [32, 8],
     [32, 16],
+    [64, 32],
+    [8, 16],
+    [8, 32],
     [16, 32],
+    [32, 64],
+    [0, 0],
+    [0, 0],
+    [0, 0],
     [0, 0],
 ];
 
@@ -424,7 +428,8 @@ pub struct SwVideo {
 impl SwVideo {
     pub fn new() -> Self {
         SwVideo {
-            output: vec![0; 240 * 160],
+            // GBAVideoSoftwareRendererInit fills the output with M_COLOR_WHITE.
+            output: vec![0xFFFFFFFF; 240 * 160],
             output_stride: 240,
             dispcnt: 0x0080,
             row: [0; 240],
@@ -869,11 +874,31 @@ impl Gba {
                 let w = &mut self.video.sw.win_n[0];
                 w.h.end = (value & 0xFF) as u8;
                 w.h.start = (value >> 8) as u8;
+                let max = VIDEO_HORIZONTAL_PIXELS as u8;
+                if w.h.start > max && w.h.start > w.h.end {
+                    w.h.start = 0;
+                }
+                if w.h.end > max {
+                    w.h.end = max;
+                    if w.h.start > max {
+                        w.h.start = max;
+                    }
+                }
             }
             GBA_REG_WIN1H => {
                 let w = &mut self.video.sw.win_n[1];
                 w.h.end = (value & 0xFF) as u8;
                 w.h.start = (value >> 8) as u8;
+                let max = VIDEO_HORIZONTAL_PIXELS as u8;
+                if w.h.start > max && w.h.start > w.h.end {
+                    w.h.start = 0;
+                }
+                if w.h.end > max {
+                    w.h.end = max;
+                    if w.h.start > max {
+                        w.h.start = max;
+                    }
+                }
             }
             GBA_REG_WIN0V => {
                 let w = &mut self.video.sw.win_n[0];
@@ -1710,10 +1735,6 @@ impl Gba {
         }
         let in_y = y + background.y as i32 - background.offset_y;
 
-        println!(
-            "mode0 bg={} enabled={} y={} sw={} end={} inx={:x} iny={:x} sel_idx...",
-            bg, self.video.sw.bg[bg].enabled, y, sw_start, sw_end, in_x0, in_y
-        );
         let mut y_base = in_y & 0xF8;
         if background.size == 2 {
             y_base += in_y & 0x100;
@@ -1750,54 +1771,44 @@ impl Gba {
             mosaic_wait = (mosaic_h - sw_start + VIDEO_HORIZONTAL_PIXELS * mosaic_h) % mosaic_h;
         }
 
+        // `carry_color` / `have_carry` hold the last sampled pixel; outside
+        // mosaic every pixel is sampled fresh (BACKGROUND_DRAW_PIXEL_16/256:
+        // only nonzero palette indices are drawn). With mosaic the sample is
+        // held for mosaicH pixels, like the C's carryData.
         let mut carry_color: u32 = 0;
         let mut have_carry = false;
         let mut out_x = sw_start;
         let mut local_x = in_x0 & 0x1FF;
         while out_x < sw_end {
-            let map_data = self.video.sw.bg[bg].map_cache[((local_x >> 3) & 0x3F) as usize];
-            let mut local_y = (in_y & 0x7) as usize;
-            if map_data & 0x0800 != 0 {
-                local_y = 7 - local_y;
-            }
-            let mut color: u32 = 0;
-            let mut fresh = true;
-            if mosaic_h > 1 && mosaic_wait != 0 {
-                fresh = false;
-            } else if mosaic_h > 1 {
-                mosaic_wait = mosaic_h;
-            }
+            let fresh = if background.mosaic && mosaic_h > 1 {
+                let f = mosaic_wait == 0;
+                if f {
+                    mosaic_wait = mosaic_h;
+                }
+                mosaic_wait -= 1;
+                f
+            } else {
+                true
+            };
 
             if fresh {
-                let tile_off = if !background.multipalette {
-                    ((map_data & 0x3FF) as usize) << 5
-                } else {
-                    ((map_data & 0x3FF) as usize) << 6
-                };
-                let char_base = background.char_base as usize
-                    + tile_off
-                    + (local_y * if background.multipalette { 8 } else { 4 });
-
+                let map_data = self.video.sw.bg[bg].map_cache[((local_x >> 3) & 0x3F) as usize];
+                let mut local_y = (in_y & 0x7) as usize;
+                if map_data & 0x0800 != 0 {
+                    local_y = 7 - local_y;
+                }
+                let mut tile_x = (local_x & 7) as usize;
+                if map_data & 0x0400 != 0 {
+                    tile_x = 7 - tile_x;
+                }
+                have_carry = false;
                 if !background.multipalette {
-                    let shift_bytes = (local_x & 7) as usize;
-                    let byte_off = char_base + ((shift_bytes >> 1) * 4) + (shift_bytes & 1);
-                    let _ = byte_off;
-                    // load 4-byte tile row word: fetch 4 bytes at once
+                    let char_base = background.char_base as usize
+                        + (((map_data & 0x3FF) as usize) << 5)
+                        + (local_y << 2);
                     if char_base < 0x10000 {
-                        let td32 = u32::from_le_bytes([
-                            self.video.vram[char_base],
-                            self.video.vram[char_base + 1],
-                            self.video.vram[char_base + 2],
-                            self.video.vram[char_base + 3],
-                        ]);
-                        let mut td = td32;
-                        let mut shift = local_x & 7;
-                        if map_data & 0x0400 != 0 {
-                            shift = 7 - shift;
-                        }
-                        td >>= (shift * 4) as u32;
-                        let _ = td32;
-                        color = td & 0xF;
+                        let byte = self.video.vram[char_base + (tile_x >> 1)];
+                        let color = ((byte >> ((tile_x & 1) * 4)) & 0xF) as u32;
                         if color != 0 {
                             carry_color = self.choose_palette(
                                 bg,
@@ -1807,46 +1818,23 @@ impl Gba {
                                 variant,
                             );
                             have_carry = true;
-                        } else {
-                            have_carry = false;
                         }
-                    } else {
-                        have_carry = false;
                     }
                 } else {
+                    let char_base = background.char_base as usize
+                        + (((map_data & 0x3FF) as usize) << 6)
+                        + (local_y << 3);
                     if char_base < 0x10000 {
-                        let byte_idx = char_base + ((local_x & 7) as usize);
-                        let mut bx = byte_idx;
-                        let _ = bx;
-                        let v = &self.video.vram;
-                        let flip_h = map_data & 0x0400 != 0;
-                        let idx_x = if flip_h {
-                            7 - (local_x & 7)
-                        } else {
-                            local_x & 7
-                        };
-                        let _ = idx_x;
-                        let px_off = char_base + idx_x as usize;
-                        color = v[px_off] as u32;
+                        let color = self.video.vram[char_base + tile_x] as u32;
                         if color != 0 {
                             carry_color = self.choose_palette(bg, 256, color, 0, variant);
                             have_carry = true;
-                        } else {
-                            have_carry = false;
                         }
-                    } else {
-                        have_carry = false;
                     }
                 }
-                if mosaic_h > 1 {
-                    mosaic_wait -= 0; // handled at loop head
-                }
-            }
-            if mosaic_h > 1 {
-                mosaic_wait -= 1;
             }
             let current = self.video.sw.row[out_x as usize];
-            if carry_color != 0 && is_writable(current) {
+            if have_carry && is_writable(current) {
                 self.mode0_compose(
                     out_x as usize,
                     carry_color,
@@ -2092,10 +2080,6 @@ impl Gba {
             }
 
             let current = self.video.sw.row[out_x as usize];
-            println!(
-                "mode3 x={} current={:08x} color={:08x}",
-                out_x, current, color
-            );
             if !slow_path || (!(current & FLAG_OBJWIN != 0)) != background.objwin_only {
                 let mut merged_flags = flags;
                 if current & FLAG_OBJWIN != 0 {
@@ -2345,7 +2329,8 @@ impl Gba {
             }
         }
 
-        let obj_x = obj_b_x(sprite.b) + self.video.sw.obj_offset_x as i32;
+        // 9-bit signed X: (uint32_t) GBAObjAttributesBGetX(b) << 23 >> 23
+        let obj_x = (obj_b_x(sprite.b) << 23 >> 23) + self.video.sw.obj_offset_x as i32;
         let in_y_base = y - (obj_a_y(sprite.a) + self.video.sw.obj_offset_y as i32);
         let in_y_base = in_y_base;
         let is_256 = obj_a_256color(sprite.a);
@@ -2356,21 +2341,12 @@ impl Gba {
             1
         };
 
-        let palette_offset = obj_c_palette(sprite.c) as usize * 16;
-
-        let mat_pair = if obj_a_transformed(sprite.a) {
-            let mi = obj_b_mat_index(sprite.b) as usize;
-            let oam = &self.video.oam;
-            let pos = mi * 16 + 6; // matrix A at +6 within each 16-byte matrix record? Actually matrix struct: {padding0[3], a, padding1[3], b, padding2[3], c, padding3[3], d} = each 16 bytes stride 16: mat.a is offset 6 bytes; Wait: GBAOAMMatrix = { int16_t padding0[3]; int16_t a; int16_t padding1[3]; int16_t b; int16_t padding2[3]; int16_t c; int16_t padding3[3]; int16_t d; }
-            let d_ot = pos;
-            let _ = d_ot;
-            // resolve: mat.a at offset 6
-            let _ = oam;
+        let palette_offset = if obj_a_256color(sprite.a) {
             0
         } else {
-            0
+            obj_c_palette(sprite.c) as usize * 16
         };
-        let _ = mat_pair;
+
 
         // Pass to the kernel that mirrors SPRITE_*_LOOP semantics.
         self.draw_sprite_kernel(
@@ -2446,26 +2422,26 @@ impl Gba {
         } else {
             0
         };
-        let objwin_palette_kind: u8 = if objwin_blend_sel && variant {
+        let objwin_palette_kind: u8 = if objwin_blend_sel {
             palette_kind
-        } else if variant {
-            0 // normal
+        } else if highlight_on {
+            2
         } else {
-            palette_kind
+            0
         };
-        let _ = objwin_palette_kind;
 
         if obj_transformed {
             let total_width = width << obj_double as i32;
             let total_height = height << obj_double as i32;
             let mat_idx = obj_b_mat_index(sprite.b) as usize;
             let oam = &self.video.oam;
-            // GBAOAMMatrix: each entry = 16 bytes at (i*0x10): {pad[3], a, pad[3], b, pad[3], c, pad[3], d}
-            let mi = mat_idx * 16;
+            // GBAOAMMatrix: 16 halfwords (32 bytes) per entry,
+            // {pad[3], a, pad[3], b, pad[3], c, pad[3], d}.
+            let mi = mat_idx * 32;
             let mat_a = u16::from_le_bytes([oam[mi + 6], oam[mi + 7]]) as i16 as i32;
-            let mat_b = u16::from_le_bytes([oam[mi + 22], oam[mi + 23]]) as i16 as i32;
-            let mat_c = u16::from_le_bytes([oam[mi + 38], oam[mi + 39]]) as i16 as i32;
-            let mat_d = u16::from_le_bytes([oam[mi + 46], oam[mi + 47]]) as i16 as i32;
+            let mat_b = u16::from_le_bytes([oam[mi + 14], oam[mi + 15]]) as i16 as i32;
+            let mat_c = u16::from_le_bytes([oam[mi + 22], oam[mi + 23]]) as i16 as i32;
+            let mat_d = u16::from_le_bytes([oam[mi + 30], oam[mi + 31]]) as i16 as i32;
 
             let mut in_y = in_y_base;
             if in_y < 0 {
@@ -2534,46 +2510,45 @@ impl Gba {
                 return 0;
             }
 
+            // SPRITE_TRANSFORMED_LOOP / SPRITE_TRANSFORMED_MOSAIC_LOOP: step the
+            // accumulators first, then sample. Out-of-bounds texels end the
+            // span (plain loop) or are skipped (mosaic loop).
             let obj_mosaic_a = obj_mosaic && mosaic_h_t > 1;
+            let width_mask = !(width - 1);
+            let height_mask = !(height - 1);
+            let mut local_x = x_accum >> 8;
+            let mut local_y = y_accum >> 8;
             while out_x < condition {
-                let before_x = x_accum >> 8;
-                let before_y = y_accum >> 8;
-                if obj_mosaic_a && (out_x % mosaic_h_t) != 0 {
-                    // keep previous accumulations
+                x_accum += mat_a;
+                y_accum += mat_c;
+                if !obj_mosaic_a || out_x % mosaic_h_t == 0 {
+                    local_x = x_accum >> 8;
+                    local_y = y_accum >> 8;
+                }
+                if local_x & width_mask != 0 || local_y & height_mask != 0 {
+                    if !obj_mosaic_a {
+                        break;
+                    }
                 } else {
-                    x_accum = mat_a * (in_x - 1 - (total_width >> 1))
-                        + mat_b * (in_y - (total_height >> 1))
-                        + (width << 7);
-                    y_accum = mat_c * (in_x - 1 - (total_width >> 1))
-                        + mat_d * (in_y - (total_height >> 1))
-                        + (height << 7);
-                }
-                let local_x = x_accum >> 8;
-                let local_y = y_accum >> 8;
-                if local_x < 0 || local_y < 0 || local_x >= width || local_y >= height {
-                    break;
-                }
-                self.sprite_draw_pixel(
-                    sprite,
-                    local_x,
-                    local_y,
-                    flags,
-                    char_base,
-                    mask_lo,
-                    mask_hi,
-                    palette_offset,
-                    out_x as usize,
-                    palette_kind,
-                    objwin_palette_kind,
-                    end,
-                );
-                if obj_mosaic_a {
-                    // don't advance the accumulators per-pixel; the loop in C
-                    // increments inX with the MOSAIC step on transformed objs
+                    self.sprite_draw_pixel(
+                        sprite,
+                        local_x,
+                        local_y,
+                        flags,
+                        char_base,
+                        mask_lo,
+                        mask_hi,
+                        palette_offset,
+                        out_x as usize,
+                        palette_kind,
+                        objwin_palette_kind,
+                        objwin_slow_path,
+                    );
                 }
                 in_x += 1;
                 out_x += 1;
             }
+            let _ = in_x;
         } else {
             let mut out_x = if x >= start { x } else { start };
             let mut condition = x + width;
@@ -2618,7 +2593,7 @@ impl Gba {
                     out_x as usize,
                     palette_kind,
                     objwin_palette_kind,
-                    end,
+                    objwin_slow_path,
                 );
                 in_x += x_offset;
                 out_x += 1;
@@ -2795,10 +2770,8 @@ impl Gba {
         out_x: usize,
         palette_kind: u8,
         objwin_palette_kind: u8,
-        _end: i32,
+        objwin_slow_path: bool,
     ) {
-        let _ = objwin_palette_kind;
-        let _ = mask_hi;
         let is_256 = obj_a_256color(sprite.a);
         let obj_mapping = dispcnt_obj_char_mapping(self.video.sw.dispcnt);
         let width_px =
@@ -2839,21 +2812,38 @@ impl Gba {
             tile_data = ((td as u32) >> ((in_x & 1) << 3)) & 0xFF;
         }
 
+        // SPRITE_DRAW_PIXEL_*_OBJWIN: OBJ-window sprites only mark the row.
+        if flags & FLAG_OBJWIN != 0 {
+            if tile_data != 0 {
+                self.video.sw.row[out_x] |= FLAG_OBJWIN;
+            } else {
+                let current = self.video.sw.sprite_layer[out_x];
+                if current != FLAG_UNWRITTEN && (current & FLAG_ORDER_MASK) > flags {
+                    self.video.sw.sprite_layer[out_x] = (current
+                        & !(FLAG_ORDER_MASK | FLAG_REBLEND | FLAG_TARGET_1))
+                        | (flags & (FLAG_ORDER_MASK | FLAG_REBLEND | FLAG_TARGET_1));
+                }
+            }
+            return;
+        }
+
+        // SPRITE_DRAW_PIXEL_*_NORMAL / _NORMAL_OBJWIN
         let current = self.video.sw.sprite_layer[out_x];
         if (current & FLAG_ORDER_MASK) > flags {
             if tile_data != 0 {
-                let palette = match palette_kind {
-                    1 => self.video.sw.variant_palette[0x100 + palette_offset + tile_data as usize],
-                    2 => {
-                        self.video.sw.highlight_palette[0x100 + palette_offset + tile_data as usize]
-                    }
-                    3 => {
-                        self.video.sw.highlight_variant_palette
-                            [0x100 + palette_offset + tile_data as usize]
-                    }
-                    _ => self.video.sw.normal_palette[0x100 + palette_offset + tile_data as usize],
+                let kind = if objwin_slow_path && self.video.sw.row[out_x] & FLAG_OBJWIN != 0 {
+                    objwin_palette_kind
+                } else {
+                    palette_kind
                 };
-                self.video.sw.sprite_layer[out_x] = palette | flags;
+                let i = 0x100 + palette_offset + tile_data as usize;
+                let color = match kind {
+                    1 => self.video.sw.variant_palette[i],
+                    2 => self.video.sw.highlight_palette[i],
+                    3 => self.video.sw.highlight_variant_palette[i],
+                    _ => self.video.sw.normal_palette[i],
+                };
+                self.video.sw.sprite_layer[out_x] = color | flags;
             } else if current != FLAG_UNWRITTEN {
                 self.video.sw.sprite_layer[out_x] = (current
                     & !(FLAG_ORDER_MASK | FLAG_REBLEND | FLAG_TARGET_1))

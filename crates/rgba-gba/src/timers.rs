@@ -1,7 +1,6 @@
 // Copyright (c) 2013-2018 Jeffrey Pfau (mGBA), MPL-2.0.
 // Ported from mgba/src/gba/timer.c.
 
-use rgba_core::timing::Timing;
 
 use crate::gba::{EventId, Gba};
 use crate::io::*;
@@ -50,7 +49,7 @@ impl Gba {
     }
 
     /// GBATimerUpdate (event callback)
-    pub fn timer_fired(&mut self, timer_id: i32, timing: &mut Timing, cycles_late: u32) {
+    pub fn timer_fired(&mut self, timer_id: i32, cycles_late: u32) {
         let t = timer_id as usize;
         if self.timers[t].flags & TIMER_COUNT_UP != 0 {
             self.memory.io[((GBA_REG_TM0CNT_LO as usize + (t << 2)) >> 1)] = self.timers[t].reload;
@@ -77,7 +76,7 @@ impl Gba {
                 let idx = ((GBA_REG_TM0CNT_LO as usize) + (n << 2)) >> 1;
                 self.memory.io[idx] = self.memory.io[idx].wrapping_add(1);
                 if self.memory.io[idx] == 0 {
-                    self.timer_fired(n as i32, timing, cycles_late);
+                    self.timer_fired(n as i32, cycles_late);
                 }
             }
         }

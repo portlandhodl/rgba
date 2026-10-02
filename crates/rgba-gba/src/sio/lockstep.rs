@@ -45,7 +45,6 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::{Rc, Weak};
 
-use rgba_core::timing::Timing;
 use rgba_core::{mlog, Level};
 
 use crate::gba::{EventId, Gba};
@@ -441,7 +440,7 @@ impl GbaSioLockstep {
     }
 
     /// GBASIOLockstepCoordinatorWaitOnPlayers
-    fn wait_on_players(&mut self, gba: &mut Gba, timing: &mut Timing, active_id: u32) {
+    fn wait_on_players(&mut self, gba: &mut Gba, active_id: u32) {
         let player_id = self.players[&active_id].player_id;
         // mASSERT_LOG checks ("Multiplayer desynchronized: ...")
         if self.waiting != 0 || self.players[&active_id].asleep || player_id != 0 {
@@ -463,7 +462,7 @@ impl GbaSioLockstep {
             return;
         }
 
-        let now = timing.current_time();
+        let now = gba.timing.current_time();
         self.advance_cycle(active_id, now);
         mlog!(
             Level::Debug,
@@ -471,7 +470,7 @@ impl GbaSioLockstep {
             "Primary waiting for players to ack"
         );
         self.waiting = ((1u32 << self.n_attached) - 1) & !target(player_id);
-        self.player_sleep(gba, timing, active_id);
+        self.player_sleep(gba, active_id);
         self.wake_players();
 
         self.verify_awake();
@@ -501,7 +500,7 @@ impl GbaSioLockstep {
     }
 
     /// GBASIOLockstepCoordinatorAckPlayer
-    fn ack_player(&mut self, gba: &mut Gba, timing: &mut Timing, active_id: u32) {
+    fn ack_player(&mut self, gba: &mut Gba, active_id: u32) {
         let player_id = self.players[&active_id].player_id;
         if player_id == 0 {
             return;
@@ -530,11 +529,11 @@ impl GbaSioLockstep {
                 self.player_wake(runner);
             }
         }
-        self.player_sleep(gba, timing, active_id);
+        self.player_sleep(gba, active_id);
     }
 
     /// GBASIOLockstepPlayerSleep
-    fn player_sleep(&mut self, gba: &mut Gba, timing: &mut Timing, lockstep_id: u32) {
+    fn player_sleep(&mut self, gba: &mut Gba, lockstep_id: u32) {
         let Some(player) = self.players.get_mut(&lockstep_id) else {
             return;
         };
@@ -546,11 +545,11 @@ impl GbaSioLockstep {
         gba.cpu.next_event = 0;
         // GBAInterrupt(gba)
         gba.early_exit = true;
-        timing.interrupt();
+        gba.timing.interrupt();
     }
 
     /// _hardSync
-    fn hard_sync(&mut self, gba: &mut Gba, timing: &mut Timing, active_id: u32) {
+    fn hard_sync(&mut self, gba: &mut Gba, active_id: u32) {
         debug_assert_eq!(self.players[&active_id].player_id, 0);
         let event = GbaSioLockstepEvent {
             event_type: GbaSioLockstepEventType::HardSync,
@@ -559,7 +558,7 @@ impl GbaSioLockstep {
             payload: 0,
         };
         self.enqueue_event(&event, TARGET_SECONDARY);
-        self.wait_on_players(gba, timing, active_id);
+        self.wait_on_players(gba, active_id);
     }
 }
 
@@ -657,39 +656,39 @@ impl GbaSioLockstepNode {
 
     /// GBASIOLockstepDriverInit
     pub(crate) fn init(&mut self, gba: &mut Gba) -> bool {
-        gba.with_timing(|g, t| self.reset_impl(g, t));
+        gba.with_timing(|g| self.reset_impl(g));
         true
     }
 
     /// GBASIOLockstepDriverDeinit (also GBASIOLockstepCoordinatorDetach's
     /// player-removal half; the frontend's detach is `Gba::sio_detach_lockstep`).
     pub(crate) fn deinit(&mut self, gba: &mut Gba) {
-        gba.with_timing(|_g, t| {
+        gba.with_timing(|g| {
             if let Some(rc) = self.coordinator.upgrade() {
                 let mut guard = rc.borrow_mut();
                 let ls = &mut *guard;
                 if ls.players.contains_key(&self.lockstep_id) {
-                    let now = t.current_time();
+                    let now = g.timing.current_time();
                     ls.remove_player(self.lockstep_id, now);
                 }
             }
-            t.deschedule(EventId::SioLockstep.into());
+            g.deschedule(EventId::SioLockstep);
             self.lockstep_id = 0;
         });
     }
 
     /// GBASIOLockstepDriverReset
     pub(crate) fn reset(&mut self, gba: &mut Gba) {
-        gba.with_timing(|g, t| self.reset_impl(g, t));
+        gba.with_timing(|g| self.reset_impl(g));
     }
 
-    fn reset_impl(&mut self, gba: &mut Gba, timing: &mut Timing) {
+    fn reset_impl(&mut self, gba: &mut Gba) {
         let Some(rc) = self.coordinator.upgrade() else {
             return;
         };
         let mut guard = rc.borrow_mut();
         let ls = &mut *guard;
-        let now = timing.current_time();
+        let now = gba.timing.current_time();
         if self.lockstep_id == 0 {
             // First reset on this node: allocate a player.
             let player = GbaSioLockstepPlayer {
@@ -755,7 +754,7 @@ impl GbaSioLockstepNode {
             ls.wake_players();
         }
 
-        if timing.is_scheduled(EventId::SioLockstep.into()) {
+        if gba.is_scheduled(EventId::SioLockstep) {
             return;
         }
 
@@ -770,22 +769,18 @@ impl GbaSioLockstepNode {
             ls.until_next_sync(self.lockstep_id, now)
         };
         drop(guard);
-        timing.schedule(
-            EventId::SioLockstep.into(),
-            EventId::SioLockstep.priority(),
-            next_event,
-        );
+        gba.schedule(EventId::SioLockstep, next_event);
     }
 
     /// GBASIOLockstepDriverSetMode
     pub(crate) fn set_mode(&mut self, gba: &mut Gba, mode: SioMode) {
-        gba.with_timing(|g, t| {
+        gba.with_timing(|g| {
             let Some(rc) = self.coordinator.upgrade() else {
                 return;
             };
             let mut guard = rc.borrow_mut();
             let ls = &mut *guard;
-            let now = t.current_time();
+            let now = g.timing.current_time();
             let Some(player) = ls.players.get_mut(&self.lockstep_id) else {
                 return;
             };
@@ -810,7 +805,7 @@ impl GbaSioLockstepNode {
             };
             if player_id == 0 {
                 ls.transfer_mode = mode;
-                ls.wait_on_players(g, t, self.lockstep_id);
+                ls.wait_on_players(g, self.lockstep_id);
             }
             ls.set_ready(g, self.lockstep_id, player_id, mode);
             ls.enqueue_event(&event, TARGET_ALL & !target(player_id));
@@ -863,13 +858,13 @@ impl GbaSioLockstepNode {
 
     /// GBASIOLockstepDriverStart
     pub(crate) fn start(&mut self, gba: &mut Gba) -> bool {
-        gba.with_timing(|g, t| {
+        gba.with_timing(|g| {
             let Some(rc) = self.coordinator.upgrade() else {
                 return false;
             };
             let mut guard = rc.borrow_mut();
             let ls = &mut *guard;
-            let now = t.current_time();
+            let now = g.timing.current_time();
             if ls.transfer_active {
                 mlog!(
                     Level::GameError,
@@ -920,7 +915,7 @@ impl GbaSioLockstepNode {
                 payload: timestamp.wrapping_add(transfer_cycles),
             };
             ls.enqueue_event(&event, TARGET_SECONDARY);
-            ls.wait_on_players(g, t, self.lockstep_id);
+            ls.wait_on_players(g, self.lockstep_id);
             ls.transfer_active = true;
             true
         })
@@ -930,7 +925,6 @@ impl GbaSioLockstepNode {
     pub(crate) fn finish_multiplayer(
         &mut self,
         gba: &mut Gba,
-        timing: &mut Timing,
         data: &mut [u16; 4],
     ) {
         let Some(rc) = self.coordinator.upgrade() else {
@@ -941,7 +935,7 @@ impl GbaSioLockstepNode {
         if ls.transfer_mode != SioMode::Multi {
             return;
         }
-        let now = timing.current_time();
+        let now = gba.timing.current_time();
         let Some(player) = ls.players.get_mut(&self.lockstep_id) else {
             return;
         };
@@ -968,12 +962,12 @@ impl GbaSioLockstepNode {
         player.data_received = false;
         let player_id = player.player_id;
         if player_id == 0 {
-            ls.hard_sync(gba, timing, self.lockstep_id);
+            ls.hard_sync(gba, self.lockstep_id);
         }
     }
 
     /// GBASIOLockstepDriverFinishNormal8
-    pub(crate) fn finish_normal8(&mut self, gba: &mut Gba, timing: &mut Timing) -> u8 {
+    pub(crate) fn finish_normal8(&mut self, gba: &mut Gba) -> u8 {
         let mut data = 0xFF;
         let Some(rc) = self.coordinator.upgrade() else {
             return data;
@@ -981,7 +975,7 @@ impl GbaSioLockstepNode {
         let mut guard = rc.borrow_mut();
         let ls = &mut *guard;
         if ls.transfer_mode == SioMode::Normal8 {
-            let now = timing.current_time();
+            let now = gba.timing.current_time();
             if let Some(player) = ls.players.get_mut(&self.lockstep_id) {
                 player.proxy_time = now;
                 if player.player_id > 0 {
@@ -1004,7 +998,7 @@ impl GbaSioLockstepNode {
                 player.data_received = false;
                 let player_id = player.player_id;
                 if player_id == 0 {
-                    ls.hard_sync(gba, timing, self.lockstep_id);
+                    ls.hard_sync(gba, self.lockstep_id);
                 }
             }
         }
@@ -1012,7 +1006,7 @@ impl GbaSioLockstepNode {
     }
 
     /// GBASIOLockstepDriverFinishNormal32
-    pub(crate) fn finish_normal32(&mut self, gba: &mut Gba, timing: &mut Timing) -> u32 {
+    pub(crate) fn finish_normal32(&mut self, gba: &mut Gba) -> u32 {
         let mut data = 0xFFFFFFFF;
         let Some(rc) = self.coordinator.upgrade() else {
             return data;
@@ -1020,7 +1014,7 @@ impl GbaSioLockstepNode {
         let mut guard = rc.borrow_mut();
         let ls = &mut *guard;
         if ls.transfer_mode == SioMode::Normal32 {
-            let now = timing.current_time();
+            let now = gba.timing.current_time();
             if let Some(player) = ls.players.get_mut(&self.lockstep_id) {
                 player.proxy_time = now;
                 if player.player_id > 0 {
@@ -1043,7 +1037,7 @@ impl GbaSioLockstepNode {
                 player.data_received = false;
                 let player_id = player.player_id;
                 if player_id == 0 {
-                    ls.hard_sync(gba, timing, self.lockstep_id);
+                    ls.hard_sync(gba, self.lockstep_id);
                 }
             }
         }
@@ -1228,13 +1222,13 @@ impl GbaSioLockstepNode {
     // -- _lockstepEvent (the priority-0x80 timing callback) ------------------
 
     /// _lockstepEvent: process this node's event queue.
-    fn process_event(&mut self, gba: &mut Gba, timing: &mut Timing, cycles_late: u32) {
+    fn process_event(&mut self, gba: &mut Gba, cycles_late: u32) {
         let Some(rc) = self.coordinator.upgrade() else {
             return;
         };
         let mut guard = rc.borrow_mut();
         let ls = &mut *guard;
-        let now = timing.current_time();
+        let now = gba.timing.current_time();
         {
             let Some(player) = ls.players.get_mut(&self.lockstep_id) else {
                 return;
@@ -1273,7 +1267,7 @@ impl GbaSioLockstepNode {
             }
             if ls.next_hard_sync < 0 {
                 if ls.waiting == 0 {
-                    ls.hard_sync(gba, timing, self.lockstep_id);
+                    ls.hard_sync(gba, self.lockstep_id);
                 }
                 ls.next_hard_sync = ls.next_hard_sync.wrapping_add(HARD_SYNC_INTERVAL);
             }
@@ -1320,7 +1314,7 @@ impl GbaSioLockstepNode {
                     ls.enqueue_event(&reply, target(event.player_id));
                 }
                 GbaSioLockstepEventType::HardSync => {
-                    ls.ack_player(gba, timing, self.lockstep_id);
+                    ls.ack_player(gba, self.lockstep_id);
                 }
                 GbaSioLockstepEventType::TransferStart => {
                     ls.set_data(gba, player_id);
@@ -1329,9 +1323,9 @@ impl GbaSioLockstepNode {
                         .wrapping_sub(time)
                         .wrapping_sub(cycles_late as i32);
                     gba.sio.siocnt |= 0x80;
-                    timing.deschedule(EventId::Sio.into());
-                    timing.schedule(EventId::Sio.into(), EventId::Sio.priority(), next_event);
-                    ls.ack_player(gba, timing, self.lockstep_id);
+                    gba.deschedule(EventId::Sio);
+                    gba.schedule(EventId::Sio, next_event);
+                    ls.ack_player(gba, self.lockstep_id);
                 }
                 GbaSioLockstepEventType::ModeSet => {
                     let event_mode = SioMode::from_raw(event.payload);
@@ -1345,7 +1339,7 @@ impl GbaSioLockstepNode {
                     }
                     ls.set_ready(gba, self.lockstep_id, event.player_id, event_mode);
                     if event.player_id == 0 {
-                        ls.ack_player(gba, timing, self.lockstep_id);
+                        ls.ack_player(gba, self.lockstep_id);
                     }
                 }
                 GbaSioLockstepEventType::Detach => {
@@ -1377,7 +1371,7 @@ impl GbaSioLockstepNode {
         let queue_empty = ls.players[&self.lockstep_id].queue.is_empty();
         if player_id != 0 && next_event <= LOCKSTEP_INTERVAL {
             if queue_empty || was_detach {
-                ls.player_sleep(gba, timing, self.lockstep_id);
+                ls.player_sleep(gba, self.lockstep_id);
                 // XXX: Is there a better way to gain sync lock at the beginning?
                 if next_event < 4 {
                     next_event = 4;
@@ -1388,23 +1382,19 @@ impl GbaSioLockstepNode {
         drop(guard);
 
         debug_assert!(next_event > 0);
-        timing.schedule(
-            EventId::SioLockstep.into(),
-            EventId::SioLockstep.priority(),
-            next_event,
-        );
+        gba.schedule(EventId::SioLockstep, next_event);
     }
 }
 
 impl Gba {
     /// Dispatch entry for the lockstep node event (`_lockstepEvent`).
-    pub fn sio_lockstep_event(&mut self, timing: &mut Timing, cycles_late: u32) {
+    pub fn sio_lockstep_event(&mut self, cycles_late: u32) {
         let driver = std::mem::take(&mut self.sio.driver);
         let SioDriver::Lockstep(mut node) = driver else {
             self.sio.driver = driver;
             return;
         };
-        node.process_event(self, timing, cycles_late);
+        node.process_event(self, cycles_late);
         self.sio.driver = SioDriver::Lockstep(node);
     }
 
