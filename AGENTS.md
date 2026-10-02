@@ -13,6 +13,44 @@ mGBA is licensed MPL-2.0; this port is a derived work and is also MPL-2.0.
 Each ported source file carries the MPL header and a comment naming the original
 mGBA file it was ported from.
 
+## Working in this repo
+
+```sh
+cargo build --workspace                 # build everything
+cargo test --workspace                  # full test suite
+cargo run --release -p rgba -- rom.gba  # run the frontend (or omit the ROM for the UI)
+```
+
+- The frontend binary is `rgba` (crate `crates/rgba`); it needs
+  `libasound2-dev` and `libudev-dev` on Debian/Ubuntu to build.
+- Version is set once, in the root `Cargo.toml` `[workspace.package]`.
+- Keep commits buildable: `cargo build --workspace` and
+  `cargo test --workspace` must pass.
+
+## Repository structure
+
+- `crates/rgba-core` — shared infrastructure: `Timing` event scheduler, the
+  `Core` trait (frontend↔console seam), ring buffers, audio resampler,
+  serializers, IPS/UPS/BPS patching, video logger, cheat search.
+- `crates/rgba-gb` — Game Boy/Color console: SM83 CPU, memory + MBCs, PPU,
+  APU, SIO (link cable, printer), savestates.
+- `crates/rgba-gba` — Game Boy Advance console: ARM7TDMI CPU, bus with
+  waitstates/prefetch, software PPU, DMA, timers, SIO, savedata, GPIO carts
+  (RTC/rumble/gyro), BIOS HLE.
+- `crates/rgba-debugger` — debugger engine: breakpoints/watchpoints,
+  condition parser, CLI, GDB stub, symbols, stack traces.
+- `crates/rgba` — the egui + cpal frontend (menus, tools, config, recording,
+  multiplayer link sessions); `src/emu.rs` wraps a console behind `Core`,
+  `src/app.rs` is the egui app, `src/tools/` the debug tool windows.
+- `packaging/` — Ubuntu packaging: `build-deb.sh` produces a lintian-clean
+  `target/deb/rgba_<version>_<arch>.deb` (icon, `.desktop` menu entry, man
+  page; runtime deps `libasound2`, `libudev1`, `libc6`).
+- `.github/workflows/release.yml` — pushing a `v*` tag runs the tests, then
+  builds the `.deb` + a stripped tarball and attaches both to a GitHub
+  release. Cut a release with `git tag vX.Y.Z && git push --tags`.
+
+The detailed file-by-file mapping to the C sources follows.
+
 ## Layout (mirrors mGBA)
 
 | Rust path | mGBA source it ports |
@@ -23,11 +61,8 @@ mGBA file it was ported from.
 | `crates/rgba-core/src/mem_search.rs` | `src/core/mem-search.c`, `include/mgba/core/mem-search.h` (memory-value cheat search; console input via `MemSearchOps` trait instead of the `mCore` vtable; state lives in the caller-held `Vec<SearchResult>`) |
 | `crates/rgba-core/src/ring.rs` | `src/util/ring-fifo.c` / `circle-buffer.c` (+ the stereo `mAudioBuffer` view from `src/util/audio-buffer.c`: `available_frames`/`peek_frame`/`drop_frames`) |
 | `crates/rgba-core/src/interpolator.rs` | `src/util/interpolator.c`, `include/mgba-util/interpolator.h` (sinc + cosine; vtable → `Interpolator` enum; C's quirks preserved) |
-| `crates/rgba-core/src/audio_resampler.rs` | `src/util/audio-resampler.c`, `include/mgba-util/audio-resampler.h` (source/dest + rates are per-call `process` params instead of stored pointers; what the SDL frontend uses, `InterpolatorType::Sinc`) |
+| `crates/rgba-core/src/audio_resampler.rs` | `src/util/audio-resampler.c`, `include/mgba-util/audio-resampler.h` (source/dest + rates are per-call `process` params instead of stored pointers; what the frontend uses, `InterpolatorType::Sinc`) |
 | `crates/rgba-core/src/convolve.rs` | `src/util/convolve.c`, `include/mgba-util/convolve.h` |
-
-Note: `src/third-party/blip_buf` is not ported — in this mGBA snapshot only the
-libretro frontend uses it; the GB/GBA cores and the SDL frontend path do not.
 | `crates/rgba-core/src/serialize.rs` | `src/core/serialize.c` |
 | `crates/rgba-core/src/patch.rs` | `src/util/patch.c`, `src/util/patch-ips.c`, `src/util/patch-ups.c` (IPS/UPS/BPS via `Patch::load`/`output_size`/`apply`) |
 | `crates/rgba-core/src/patch_fast.rs` | `src/util/patch-fast.c` (in-memory XOR-extent diff, used by mGBA's rewind) |
@@ -81,6 +116,9 @@ libretro frontend uses it; the GB/GBA cores and the SDL frontend path do not.
 | `crates/rgba-gba/src/debugger.rs` | `src/arm/debugger/*` + GBA glue from `src/gba/gba.c`/`core.c` |
 | `crates/rgba/src/*` | egui + cpal frontend (like `src/platform/sdl/sdl-main.c`; `--patch` mirrors `mCore::loadPatch` by patching the ROM buffer before `load_rom`; per-frame audio resample into the cpal output queue mirrors `src/platform/sdl/sdl-audio.c`'s callback with `mINTERPOLATOR_SINC` and `fauxClock == 1`) |
 
+Note: `src/third-party/blip_buf` is not ported — in this mGBA snapshot only the
+libretro frontend uses it; the GB/GBA cores and the frontend audio path do not.
+
 ## Conventions
 
 - Timing: all console code drives `rgba_core::timing::Timing` exactly like
@@ -91,5 +129,7 @@ libretro frontend uses it; the GB/GBA cores and the SDL frontend path do not.
 - Memory access widths behave like the C: helpers `load8/16/32`, `store8/16/32`.
 - Keep identifiers close to the C names (`io_read` ↔ `GBIORead`, etc.) so the C
   source remains a readable reference.
+- Newly ported files must carry the MPL header plus a `// Ported from mgba/...`
+  marker, and a row in the mapping table above.
 - No `unsafe` unless a measurable perf win demands it and it is justified in a comment.
 - Build everything with `cargo build --workspace`; run tests with `cargo test --workspace`.
