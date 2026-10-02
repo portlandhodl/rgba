@@ -1,3 +1,8 @@
 /target
 *.swp
 *~
+# ROMs and save data
+*.gba
+*.gbc
+*.gb
+*.sav
