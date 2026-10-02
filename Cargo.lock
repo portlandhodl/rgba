@@ -3150,7 +3150,7 @@ dependencies = [
 
 [[package]]
 name = "rgba"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "clap",
@@ -3171,7 +3171,7 @@ dependencies = [
 
 [[package]]
 name = "rgba-core"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "flate2",
 ]
@@ -3185,7 +3185,7 @@ dependencies = [
 
 [[package]]
 name = "rgba-gb"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "paste",
  "rgba-core",
@@ -3194,7 +3194,7 @@ dependencies = [
 
 [[package]]
 name = "rgba-gba"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "rgba-core",
  "rgba-debugger",
