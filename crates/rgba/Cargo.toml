@@ -1,6 +1,6 @@
 [package]
 name = "rgba"
-description = "rgba emulator frontend (egui + SDL2 audio)"
+description = "rgba emulator frontend (egui + cpal audio)"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -14,7 +14,7 @@ rgba-core = { path = "../rgba-core" }
 rgba-debugger = { path = "../rgba-debugger" }
 rgba-gb = { path = "../rgba-gb" }
 rgba-gba = { path = "../rgba-gba" }
-sdl2 = { version = "0.37", default-features = true }
+cpal = "0.15"
 clap = { version = "4", features = ["derive"] }
 anyhow = "1"
 eframe = "0.36"

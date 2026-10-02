@@ -1,6 +1,6 @@
 // Copyright (c) 2013-2021 Jeffrey Pfau (mGBA), MPL-2.0.
 // rgba frontend: an egui window with mGBA Qt's menu structure (Window.cpp)
-// driving the GBA/GB cores, with SDL2 used for audio output.
+// driving the GBA/GB cores, with cpal used for audio output.
 
 use std::path::PathBuf;
 

@@ -79,7 +79,7 @@ libretro frontend uses it; the GB/GBA cores and the SDL frontend path do not.
 | `crates/rgba-gba/src/arm/decoder.rs` | `src/arm/decoder.c`, `decoder-arm.c`, `decoder-thumb.c` (debuggers/trace only) |
 | `crates/rgba-gb/src/debugger.rs` | `src/sm83/debugger/*`, `src/gb/debugger/debugger.c` |
 | `crates/rgba-gba/src/debugger.rs` | `src/arm/debugger/*` + GBA glue from `src/gba/gba.c`/`core.c` |
-| `crates/rgba/src/*` | SDL2 frontend (like `src/platform/sdl/sdl-main.c`; `--patch` mirrors `mCore::loadPatch` by patching the ROM buffer before `load_rom`; per-frame audio resample into the SDL queue mirrors `src/platform/sdl/sdl-audio.c`'s callback with `mINTERPOLATOR_SINC` and `fauxClock == 1`) |
+| `crates/rgba/src/*` | egui + cpal frontend (like `src/platform/sdl/sdl-main.c`; `--patch` mirrors `mCore::loadPatch` by patching the ROM buffer before `load_rom`; per-frame audio resample into the cpal output queue mirrors `src/platform/sdl/sdl-audio.c`'s callback with `mINTERPOLATOR_SINC` and `fauxClock == 1`) |
 
 ## Conventions
 

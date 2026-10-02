@@ -43,7 +43,7 @@ Three core crates, mirroring how the emulator is layered, plus the executable:
 | `rgba-gb` | Game Boy/GBC — SM83 CPU, MBCs, PPU incl. SGB borders, APU (2 pulse + wave + noise), SIO incl. link-cable lockstep and the GB Printer |
 | `rgba-gba` | Game Boy Advance — ARM7TDMI (ARM + Thumb), memory bus with waitstates + prefetch, software PPU (modes 0–5, sprites, windows, blending, mosaic), DMA, timers, SIO (lockstep, Dolphin link, Game Boy Player, battlechip), BIOS HLE, GPIO carts (RTC, rumble, gyro/tilt, light), savedata (SRAM/Flash512/Flash1M/EEPROM), e-Reader, unlicensed carts |
 | `rgba-debugger` | Full mGBA-style debugger: breakpoints (hardware + software via BKPT patching), read/write/change watchpoints, condition expression parser, stack traces, symbols (map/ELF formats) |
-| `rgba` | The SDL2 frontend (this crate's `main.rs`) |
+| `rgba` | The egui + cpal frontend (this crate's `main.rs`) |
 
 The `Core` trait is the seam between frontend and consoles; the debugger sits
 on top as a pluggable `DebuggerModule` list (CLI today; the GDB stub is a
@@ -54,8 +54,8 @@ interoperable with mGBA itself.
 
 ## Building from source
 
-Requires a stable Rust toolchain and SDL2 dev libraries (on Debian/Ubuntu:
-`libSDL2-dev`; on macOS: `brew install sdl2`).
+Requires a stable Rust toolchain. Audio uses cpal (ALSA on Linux — on
+Debian/Ubuntu install `libasound2-dev`).
 
 ```sh
 cargo build --release         # binary: target/release/rgba
