@@ -63,6 +63,18 @@ cargo test --workspace        # full test suite (~240 integration/unit tests)
 cargo test -p rgba-gba        # just the GBA core
 ```
 
+## Ubuntu package
+
+```sh
+packaging/build-deb.sh        # builds target/deb/rgba_<version>_amd64.deb
+sudo dpkg -i target/deb/rgba_*_amd64.deb
+```
+
+The package installs the `rgba` binary, an application-menu entry (with the
+glacier-blue GBA icon) and a man page. Tagged releases (`git tag v0.1.0 &&
+git push --tags`) build the `.deb` and a standalone tarball automatically via
+the release workflow and attach them to the GitHub release.
+
 ## Accuracy
 
 Cycle-count and bus behavior mirror mGBA's: instruction timing tables, SIO

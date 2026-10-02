@@ -1,0 +1,27 @@
+.TH RGBA 1
+.SH NAME
+rgba \- Game Boy Advance and Game Boy emulator (Rust port of mGBA)
+.SH SYNOPSIS
+.B rgba
+.RI [ rom.gba | rom.gb ]
+.RI [ options ]
+.SH DESCRIPTION
+.B rgba
+emulates the Game Boy Advance (ARM7TDMI) and Game Boy/Game Boy Color
+(SM83) consoles, mirroring mGBA's timing semantics. It includes a
+debugger, cheats, savestates, recording and link-cable emulation.
+.SH OPTIONS
+.TP
+.BI \-\-bios " file"
+Use the given GBA BIOS image (HLE BIOS otherwise).
+.TP
+.BI \-\-gb\-model " model"
+Boot model for Game Boy ROMs (dmg, cgb, sgb, mgb, sgb2, scgb).
+.TP
+.BR \-h ", " \-\-help
+Show the full list of options.
+.SH FILES
+Settings and save data live under the user's XDG config/data
+directories.
+.SH LICENSE
+MPL-2.0, like the mGBA project it is ported from.

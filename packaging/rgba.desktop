@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=rgba
+GenericName=GBA/GB Emulator
+Comment=Game Boy Advance and Game Boy emulator (Rust port of mGBA)
+Exec=rgba %f
+Icon=rgba
+Categories=Game;Emulator;
+Keywords=gba;gameboy;emulator;
+Terminal=false

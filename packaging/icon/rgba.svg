@@ -1,0 +1,40 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">
+  <defs>
+    <linearGradient id="body" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#dcecfb"/>
+      <stop offset="0.55" stop-color="#b3cdec"/>
+      <stop offset="1" stop-color="#93b4de"/>
+    </linearGradient>
+    <linearGradient id="screen" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#2c3d5c"/>
+      <stop offset="1" stop-color="#141d30"/>
+    </linearGradient>
+  </defs>
+
+  <!-- GBA body -->
+  <rect x="6" y="32" width="116" height="64" rx="20" fill="url(#body)" stroke="#5f7fae" stroke-width="2"/>
+  <!-- raised screen bezel -->
+  <rect x="38" y="38" width="52" height="52" rx="6" fill="#7ea3d4" stroke="#5f7fae" stroke-width="1.5"/>
+  <!-- LCD (3:2, like the real 240x160 panel) -->
+  <rect x="42" y="48" width="44" height="30" rx="2" fill="url(#screen)"/>
+  <!-- LCD glass reflection -->
+  <polygon points="42,48 62,48 50,78 42,78" fill="#ffffff" opacity="0.08"/>
+
+  <!-- D-pad -->
+  <g fill="#33415c">
+    <rect x="16" y="57" width="18" height="6" rx="1.5"/>
+    <rect x="22" y="51" width="6" height="18" rx="1.5"/>
+  </g>
+  <circle cx="25" cy="60" r="2.4" fill="#263349"/>
+
+  <!-- A / B buttons -->
+  <circle cx="104" cy="55" r="6.5" fill="#4a6b9e" stroke="#33415c" stroke-width="1.2"/>
+  <circle cx="92" cy="67" r="6.5" fill="#6686b4" stroke="#33415c" stroke-width="1.2"/>
+
+  <!-- start / select -->
+  <rect x="54" y="85" width="8" height="2.6" rx="1.3" fill="#33415c"/>
+  <rect x="66" y="85" width="8" height="2.6" rx="1.3" fill="#33415c"/>
+
+  <!-- power LED -->
+  <circle cx="64" cy="43" r="1.6" fill="#e0654a"/>
+</svg>
